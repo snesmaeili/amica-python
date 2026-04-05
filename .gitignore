@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.venv*/
+.matlab_engine_src/
+# Local dev config
+.claude/
+.mcp.json
+*.fdt
+*.set
+tmpdata*.fdt

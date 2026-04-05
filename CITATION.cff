@@ -1,0 +1,60 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "amica-python"
+abstract: "Native Python implementation of AMICA (Adaptive Mixture ICA) for MNE-Python, with JAX acceleration."
+authors:
+  - family-names: "Esmaeili"
+    given-names: "Sina"
+    email: "sina.esmaeili@umontreal.ca"
+    orcid: "https://orcid.org/0000-0002-5335-3235"
+    affiliation: "Université de Montréal"
+  - family-names: "Abdelhedi"
+    given-names: "Hamza"
+    email: "hamza.abdelhedi@umontreal.ca"
+    orcid: "https://orcid.org/0000-0002-4638-640X"
+    affiliation: "Université de Montréal, Mila"
+  - family-names: "Jerbi"
+    given-names: "Karim"
+    email: "karim.jerbi@umontreal.ca"
+    orcid: "https://orcid.org/0000-0002-3790-9651"
+    affiliation: "Université de Montréal, Mila"
+license: BSD-3-Clause
+repository-code: "https://github.com/snesmaeili/amica-python"
+version: "0.1.0"
+date-released: "2026-04-05"
+keywords:
+  - EEG
+  - MEG
+  - ICA
+  - AMICA
+  - MNE-Python
+  - signal processing
+  - neuroscience
+references:
+  - type: article
+    authors:
+      - family-names: "Palmer"
+        given-names: "Jason A."
+      - family-names: "Kreutz-Delgado"
+        given-names: "Ken"
+      - family-names: "Makeig"
+        given-names: "Scott"
+    title: "AMICA: An Adaptive Mixture of Independent Component Analyzers with Shared Components"
+    year: 2011
+  - type: article
+    authors:
+      - family-names: "Delorme"
+        given-names: "Arnaud"
+      - family-names: "Palmer"
+        given-names: "Jason"
+      - family-names: "Onton"
+        given-names: "Julie"
+      - family-names: "Oostenveld"
+        given-names: "Robert"
+      - family-names: "Makeig"
+        given-names: "Scott"
+    title: "Independent EEG Sources Are Dipolar"
+    journal: "PLoS ONE"
+    year: 2012
+    doi: "10.1371/journal.pone.0030135"
