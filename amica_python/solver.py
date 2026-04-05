@@ -104,21 +104,21 @@ def _amica_step(
     ll = compute_total_loglikelihood(y, W, alpha, mu, beta, rho, log_det_sphere)
     
     # Adaptive Learning Rate Logic (matching Fortran AMICA)
-    # `lrate` passed in is the BASE learning rate (not halved).
-    # Fortran internally uses lrate/2 for natural gradient,
-    # then ramps to newtrate over newt_ramp iters when Newton starts.
-    #
-    # The base lrate is decayed on LL decrease and returned unchanged
-    # for the outer loop to pass back next iteration.
+    # `lrate` is the base learning rate from the outer loop.
+    # On LL decrease, decay it by lratefact and return the decayed value
+    # so the outer loop can track it.
+    # Fortran uses lrate/2 for natural gradient, then ramps to newtrate.
     dll = ll - ll_prev
     ll_decreased = (dll < 0.0) & (iteration > 1)
     lrate_base = jnp.where(ll_decreased, lrate * lratefact, lrate)
     lrate_base = jnp.maximum(lrate_base, minlrate)
 
-    # Compute effective step size (internal to this iteration only):
+    # Compute effective step size for this iteration:
     #   Before newt_start: lrate_eff = lrate_base / 2
-    #   During ramp (newt_start to newt_start+newt_ramp): linear from lrate_base/2 to newtrate
+    #   During ramp: linear interpolation from lrate_base/2 to newtrate
     #   After ramp: lrate_eff = newtrate
+    # Note: lrate_base is already the (possibly decayed) base rate.
+    # The /2 here is the Fortran convention, NOT an additional decay.
     newt_ramp = 10  # TODO: pass from config when newt_ramp is added to AmicaConfig
     in_newton = do_newton & (iteration >= newt_start_iter)
     ramp_progress = jnp.clip(
@@ -610,28 +610,29 @@ class Amica:
                     data_white = jnp.asarray(np.asarray(data_white)[:, kept_idx])
                     n_samples = data_white.shape[1]
 
-            # Check convergence triggers based on lrate
-            # The JIT step already applied lrate decay if ll declined.
-            # We just need to track 'numdecs' for long-term scheduling.
+            # Convergence logic: track lrate decay and recovery
             dll = ll_val - ll_prev_val
-            
-            # Update current lrate for next step
+
+            # The JIT step decays lrate on LL decrease and returns it
             lrate = lrate_new_val
-            
+
             if iteration > 0 and dll < 0:
-                # LL decreased
-                # Step already reduced lrate.
-                if iteration % 10 == 0:
-                    logger.debug("Iter %d: LL decreased, lrate adjusted to %.2e", iteration, lrate)
-                
+                # LL decreased — JIT already decayed lrate by lratefact
                 numdecs += 1
                 if numdecs >= self.config.max_decs:
+                    # Persistent decay: reduce the ceiling rates
                     lrate0 *= self.config.lratefact
+                    lrate = lrate0  # Reset to new ceiling
                     if iteration > self.config.newt_start:
                         rholrate0 *= self.config.rholratefact
                         if self.config.do_newton:
                             newtrate *= self.config.lratefact
                     numdecs = 0
+                if iteration % 10 == 0:
+                    logger.debug("Iter %d: LL decreased, lrate=%.2e", iteration, lrate)
+            elif iteration > 0 and dll > 0:
+                # LL improved — reset decrease counter
+                numdecs = 0
             
             if iteration > 0 and self.config.use_min_dll:
                 if dll < self.config.min_dll:
