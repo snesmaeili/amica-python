@@ -2,9 +2,9 @@
 
 > **Note:** This package is under active validation. The core algorithm works and matches MATLAB AMICA numerically, but the full validation suite and documentation are still in progress.
 
-Python implementation of AMICA (Adaptive Mixture ICA) with optional JAX acceleration. Designed for EEG/MEG preprocessing with MNE-Python.
+Python reimplementation of AMICA (Adaptive Mixture ICA), originally a closed-source Fortran binary from UCSD (Palmer et al., 2011). AMICA ranked first among 22 ICA algorithms for EEG in mutual information reduction and source dipolarity (Delorme et al., 2012).
 
-AMICA models source distributions as mixtures of generalized Gaussians and uses Newton optimization for fast convergence. It ranked first among 22 ICA algorithms on EEG data in terms of mutual information reduction and dipole fit quality (Delorme et al., 2012).
+This package provides the full algorithm in Python with optional JAX acceleration and MNE-Python integration.
 
 ## Installation
 
@@ -14,13 +14,7 @@ cd amica-python
 pip install -e ".[all]"
 ```
 
-Or install specific extras:
-
-```bash
-pip install -e ".[jax]"   # JAX backend
-pip install -e ".[mne]"   # MNE-Python integration
-pip install -e ".[dev]"   # testing
-```
+Extras: `jax` (JAX backend), `mne` (MNE-Python integration), `dev` (testing).
 
 ## Usage
 
@@ -33,7 +27,7 @@ result = model.fit(data)  # (n_channels, n_samples)
 sources = model.transform(data)
 ```
 
-With MNE-Python:
+MNE-Python — `fit_ica` returns a standard `mne.preprocessing.ICA` object, so all MNE ICA methods work out of the box:
 
 ```python
 from amica_python import fit_ica
@@ -43,7 +37,7 @@ ica.plot_components()
 ica.apply(raw)
 ```
 
-Picard-style functional API:
+Picard-compatible functional API for direct use in MNE's ICA pipeline:
 
 ```python
 from amica_python import amica
@@ -51,15 +45,15 @@ from amica_python import amica
 W, n_iter = amica(X, return_n_iter=True)  # X: (n_samples, n_components)
 ```
 
-## What AMICA does differently
+## Background
 
-Standard ICA algorithms (Infomax, FastICA, Picard) assume fixed source distributions. AMICA learns them: each source gets a mixture of generalized Gaussians with adaptive shape (rho), scale (beta), and location (mu) parameters. The shape parameter ranges from 1 (Laplacian, super-Gaussian) to 2 (Gaussian), so each component adapts to the actual statistics of the data.
+AMICA fits an ICA mixture model where each source has its own mixture of generalized Gaussians with adaptive shape (rho), scale (beta), and location (mu). The shape parameter interpolates between Laplacian (rho=1, super-Gaussian) and Gaussian (rho=2), so it adapts to whatever the data actually looks like rather than assuming a fixed distribution.
 
-The Newton method (Palmer et al., 2008) gives quadratic convergence once the natural gradient phase gets close to the solution. Sample rejection (Klug et al., 2024) downweights outlier time points to improve robustness on noisy data.
+Convergence uses natural gradient followed by Newton optimization (Palmer et al., 2008). Optional sample rejection (Klug et al., 2024) downweights outlier time points.
 
 ## Validation
 
-Numerical parity with MATLAB AMICA 1.7 has been verified:
+Numerical parity with MATLAB AMICA 1.7:
 
 | Configuration | LL difference | W correlation |
 | --- | --- | --- |
@@ -67,20 +61,20 @@ Numerical parity with MATLAB AMICA 1.7 has been verified:
 | 3 mixtures, Newton | 0.00008% | > 0.9999 |
 | 3 mixtures, natural gradient | 0.08% | > 0.9995 |
 
-On synthetic sources (3 channels, 5000 samples, Laplacian), the Amari index is 0.008 compared to 0.010 for FastICA and 0.195 for Infomax.
+Amari index on synthetic Laplacian sources (3 ch, 5000 samples): AMICA 0.008, FastICA 0.010, Infomax 0.195.
 
 ## Parameters
 
-Defaults follow the recommendations in Frank et al. (2023) and Klug et al. (2024):
+Defaults follow Frank et al. (2023) and Klug et al. (2024):
 
 | Parameter | Default | What it does |
 | --- | --- | --- |
 | `max_iter` | 2000 | EM iterations |
-| `num_mix_comps` | 3 | Gaussian mixture components per source |
+| `num_mix_comps` | 3 | Mixture components per source |
 | `do_newton` | True | Newton optimization after iteration 50 |
 | `do_reject` | False | Outlier sample rejection |
-| `rejsig` | 3.0 | Rejection threshold (standard deviations) |
-| `rho0` | 1.5 | Initial shape (between 1=Laplacian and 2=Gaussian) |
+| `rejsig` | 3.0 | Rejection threshold in SD |
+| `rho0` | 1.5 | Initial shape parameter |
 
 ## References
 
