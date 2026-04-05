@@ -1,5 +1,7 @@
 # amica-python
 
+> **Note:** This package is under active validation. The core algorithm works and matches MATLAB AMICA numerically, but the full validation suite and documentation are still in progress.
+
 Python implementation of AMICA (Adaptive Mixture ICA) with optional JAX acceleration. Designed for EEG/MEG preprocessing with MNE-Python.
 
 AMICA models source distributions as mixtures of generalized Gaussians and uses Newton optimization for fast convergence. It ranked first among 22 ICA algorithms on EEG data in terms of mutual information reduction and dipole fit quality (Delorme et al., 2012).
