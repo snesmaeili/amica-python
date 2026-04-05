@@ -84,7 +84,10 @@ def fit_ica(
     from amica_python import Amica, AmicaConfig
 
     # Step 1: Create MNE ICA and let it handle preprocessing
-    # We use 'infomax' as a placeholder to get MNE's whitening pipeline
+    # We use 'infomax' as a placeholder to get MNE's whitening pipeline.
+    # The 1-iteration infomax fit is discarded — only the whitening is kept.
+    import warnings
+
     ica = ICA(
         n_components=n_components,
         method="infomax",
@@ -92,15 +95,19 @@ def fit_ica(
         max_iter=1,  # We'll replace the unmixing anyway
     )
 
-    # Fit with infomax (1 iteration, just to set up whitening)
-    ica.fit(
-        inst,
-        picks=picks,
-        reject=reject,
-        flat=flat,
-        decim=decim,
-        verbose=verbose,
-    )
+    # Suppress warnings from the throwaway infomax fit (e.g. variance ratio,
+    # convergence) — these don't apply to the AMICA decomposition.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*n_components.*unstable.*")
+        warnings.filterwarnings("ignore", message=".*convergence.*")
+        ica.fit(
+            inst,
+            picks=picks,
+            reject=reject,
+            flat=flat,
+            decim=decim,
+            verbose=verbose,
+        )
 
     # Step 2: Extract whitened data and re-run with AMICA
     from mne.io import BaseRaw

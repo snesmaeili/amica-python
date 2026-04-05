@@ -134,6 +134,7 @@ def _amica_step(
 
     # 5. Newton Correction
     Wtmp = dA_local
+    newton_used = jnp.array(False)
 
     def apply_newton(operands):
         y_, alpha_, mu_, beta_, rho_ = operands
@@ -143,17 +144,24 @@ def _amica_step(
             dA_local, sigma2, kappa, lambda_
         )
         is_valid = lambda_pos & posdef_newt
-        return jnp.where(is_valid, Wtmp_newt, dA_local)
+        return jnp.where(is_valid, Wtmp_newt, dA_local), is_valid
 
     if do_newton:
-        Wtmp = jax.lax.cond(
+        def try_newton(operands):
+            return apply_newton(operands)
+
+        def skip_newton(operands):
+            return dA_local, jnp.array(False)
+
+        Wtmp, newton_used = jax.lax.cond(
             iteration >= newt_start_iter,
-            apply_newton,
-            lambda x: dA_local,
+            try_newton,
+            skip_newton,
             (y, alpha, mu, beta, rho)
         )
     else:
         Wtmp = dA_local
+        newton_used = jnp.array(False)
 
     # 6. Update A using step-local lrate (halved natgrad or ramped Newton)
     dAk = A @ Wtmp
@@ -236,7 +244,7 @@ def _amica_step(
 
     return (
         W_new, A_new, c_new, alpha_new, mu_new, beta_new, rho_new, gm,
-        ll, is_good, lrate_base
+        ll, is_good, lrate_base, newton_used
     )
 
 
@@ -502,6 +510,8 @@ class Amica:
         iteration_times: List[float] = []
         elapsed_times: List[float] = []
         converged = False
+        newton_count = 0  # Track how many iterations actually used Newton
+        natgrad_fallback_count = 0  # Track Newton fallbacks
         start_time = time.perf_counter()
         
         # Initial ll_prev for first iteration
@@ -540,14 +550,14 @@ class Amica:
             # 'iteration' is passed as argument, treated as dynamic by default in JIT, which is fine.
             # dynamic_update_slice etc might be used inside if needed, but we use simple boolean logic.
             
-            (W_new, A_new, c_new, alpha_new, mu_new, beta_new, rho_new, gm_new, 
-             ll_curr, is_good, lrate_eff) = _amica_step(
+            (W_new, A_new, c_new, alpha_new, mu_new, beta_new, rho_new, gm_new,
+             ll_curr, is_good, lrate_eff, newton_used) = _amica_step(
                 W, A, c, alpha, mu, beta, rho, gm,
-                lrate, 
-                ll_prev_val, 
+                lrate,
+                ll_prev_val,
                 self.config.lratefact,
                 self.config.minlrate,
-                newtrate, 
+                newtrate,
                 rholrate,
                 data_white, log_det_sphere,
                 # Config scalars
@@ -559,12 +569,12 @@ class Amica:
                 do_newton_static, do_mean_static, do_sphere_static, doscaling_static,
                 update_alpha_static, update_mu_static, update_beta_static, update_rho_static,
             )
-            
+
             # Block until scalars are ready (synchronize for checking)
-            # This incurs a small overhead but necessary for hybrid Python/JAX control flow
             is_good_val = bool(is_good)
             ll_val = float(ll_curr)
             lrate_new_val = float(lrate_eff)
+            newton_used_val = bool(newton_used)
             
             if not is_good_val:
                 lrate *= 0.5
@@ -663,9 +673,22 @@ class Amica:
             # rholrate0 changes only on max_decs)
             rholrate = rholrate0
 
+            # Track Newton usage
+            if iteration >= self.config.newt_start and do_newton_static:
+                if newton_used_val:
+                    newton_count += 1
+                else:
+                    natgrad_fallback_count += 1
+
             # Progress output
             if iteration % 10 == 0:
-                logger.info("Iter %4d: LL = %.6f, lrate = %.2e", iteration, ll_val, lrate)
+                if iteration >= self.config.newt_start and do_newton_static:
+                    mode = "N" if newton_used_val else "ng"
+                    logger.info("Iter %4d: LL = %.6f, lrate = %.2e [%s]",
+                                iteration, ll_val, lrate, mode)
+                else:
+                    logger.info("Iter %4d: LL = %.6f, lrate = %.2e",
+                                iteration, ll_val, lrate)
             
             # Checkpoint
             if self.config.outdir is not None and self.config.writestep > 0 and (iteration + 1) % self.config.writestep == 0:
@@ -699,7 +722,19 @@ class Amica:
 
         if not converged:
             logger.info("Reached max_iter (%d)", self.config.max_iter)
-        
+
+        # Newton diagnostic summary
+        if do_newton_static and self.config.newt_start < len(LL):
+            total_newton_iters = newton_count + natgrad_fallback_count
+            if total_newton_iters > 0:
+                pct = 100.0 * newton_count / total_newton_iters
+                logger.info(
+                    "Newton: %d/%d iterations used Newton (%.0f%%), "
+                    "%d fell back to natural gradient",
+                    newton_count, total_newton_iters, pct,
+                    natgrad_fallback_count
+                )
+
         # ========== Construct Result ==========
         # Convert from whitened space to sensor space
         # A_sensor = desphere @ A_whitened
