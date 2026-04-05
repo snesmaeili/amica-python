@@ -84,15 +84,12 @@ Defaults follow the recommendations in Frank et al. (2023) and Klug et al. (2024
 
 ## References
 
-Palmer, J.A., Kreutz-Delgado, K., & Makeig, S. (2011). AMICA: An Adaptive Mixture of Independent Component Analyzers with Shared Components. SCCN Technical Report.
-
-Palmer, J.A., Makeig, S., Kreutz-Delgado, K., & Rao, B.D. (2008). Newton Method for the ICA Mixture Model. Proc. ICASSP.
-
-Delorme, A., Palmer, J., Onton, J., Oostenveld, R., & Makeig, S. (2012). Independent EEG Sources Are Dipolar. PLoS ONE, 7(2), e30135.
-
-Frank, R.M., Heppner, A., & Borghese, F. (2023). Optimal Parameters for AMICA. IEEE BIBE.
-
-Klug, M., Berg, J., & Gramann, K. (2024). Optimizing EEG independent component analysis. Scientific Reports.
+- Palmer, Kreutz-Delgado, Makeig (2011). AMICA: An Adaptive Mixture of Independent Component Analyzers with Shared Components. SCCN Technical Report.
+- Palmer, Makeig, Kreutz-Delgado, Rao (2008). Newton Method for the ICA Mixture Model. ICASSP.
+- Palmer, Kreutz-Delgado, Makeig (2006). Super-Gaussian Mixture Source Model for ICA. ICA.
+- Delorme et al. (2012). Independent EEG Sources Are Dipolar. PLoS ONE.
+- Frank et al. (2023). Optimal Parameters for AMICA. IEEE BIBE.
+- Klug, Berg, Gramann (2024). Optimizing EEG ICA decomposition. Scientific Reports.
 
 ## License
 
