@@ -23,6 +23,7 @@ References
 """
 import json
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -34,20 +35,19 @@ logger = logging.getLogger(__name__)
 
 # ── Paths ──
 # Update DS_PATH to your local ds004505 location
-DS_PATH = Path(
-    r"D:\mne-denoise\_codex_main_revert_20260306\examples\tutorials\data\ds004505"
-)
+DS_PATH = Path(os.environ.get("DS_PATH", "/home/sesma/scratch/ds004505"))
 RESULTS_DIR = Path(__file__).parent / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
 
 # ── Parameters ──
-SUBJECT = "sub-01"
+SUBJECTS = os.environ.get("SUBJECTS", "sub-01").split(",")
 SFREQ_TARGET = 250  # Hz — matches Frank 2025, halves compute vs 500 Hz
 MIN_KAPPA = 30  # Frank 2025 recommendation
 MAX_DURATION_SEC = None  # Use all available data (kappa-driven)
 METHODS = ["amica", "picard", "infomax", "fastica"]
-MAX_ITER = 2000  # Frank 2023 recommendation
+MAX_ITER = int(os.environ.get("MAX_ITER", "500"))
 AMICA_NUM_MIX = 3  # Frank 2023 recommendation
+HP_FILTERS = [1.0, 2.0]  # Klug 2024: sweep HP cutoff for mobile EEG
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -129,8 +129,16 @@ def classify_channels(raw, set_path=None):
 # Preprocessing — following Paper9 notebook and Frank 2025
 # ═══════════════════════════════════════════════════════════════════════
 
-def load_and_preprocess(subject):
+def load_and_preprocess(subject, hp_freq=1.0):
     """Load ds004505, classify channels, preprocess for ICA.
+
+    Parameters
+    ----------
+    subject : str
+        Subject ID (e.g. 'sub-01').
+    hp_freq : float
+        High-pass filter cutoff in Hz. Merged files already have 1 Hz HP,
+        so hp_freq >= 1.0 is required. Use 2.0 for Klug 2024 mobile sweep.
 
     Returns raw (scalp EEG only, ready for ICA) and channel groups dict.
     """
@@ -175,7 +183,9 @@ def load_and_preprocess(subject):
         logger.info("  Resampled to %d Hz", SFREQ_TARGET)
 
     # Merged files are already 1 Hz HP filtered (Studnicki 2024).
-    # No redundant filtering needed. Just apply average reference.
+    # Apply hp_freq (>= 1 Hz) + 100 Hz LP — ICLabel requires 1-100 Hz bandpass.
+    raw.filter(hp_freq, 100.0, verbose=False)
+    logger.info("  Filtered: %.1f–100 Hz", hp_freq)
     raw.set_eeg_reference("average", verbose=False)
 
     # Determine how much data we need for kappa >= MIN_KAPPA
@@ -240,7 +250,6 @@ def run_ica_method(raw, method, n_components, max_iter=2000):
             max_iter=max_iter,
             num_mix=AMICA_NUM_MIX,
             random_state=42,
-            fit_params={"do_newton": True},
         )
         dt = time.time() - t0
     else:
@@ -271,16 +280,17 @@ def run_iclabel(ica, raw):
     from mne_icalabel import label_components
 
     labels = label_components(raw, ica, method="iclabel")
-    pred = labels["labels"]
-    probs = labels["y_pred_proba"]
+    pred_labels = labels["labels"]
 
     counts = {}
     for cat in ["brain", "muscle", "eye", "heart", "line_noise", "channel_noise", "other"]:
-        counts[cat] = sum(1 for l in pred if l == cat)
+        counts[cat] = sum(1 for l in pred_labels if l == cat)
 
-    brain_probs = probs[:, 0]
-    counts["brain_50pct"] = int(np.sum(brain_probs > 0.5))
-    counts["brain_70pct"] = int(np.sum(brain_probs > 0.7))
+    pred_probs = np.array(labels["y_pred_proba"])
+    pred_labels_arr = np.array(pred_labels)
+    brain_mask = pred_labels_arr == "brain"
+    counts["brain_50pct"] = int(np.sum(brain_mask & (pred_probs > 0.5)))
+    counts["brain_70pct"] = int(np.sum(brain_mask & (pred_probs > 0.7)))
 
     logger.info(
         "    ICLabel: brain=%d (>50%%: %d, >70%%: %d), muscle=%d, eye=%d",
@@ -315,12 +325,12 @@ def compute_kurtosis_quality(ica, raw):
 
 
 def compute_reconstruction_error(ica, raw):
-    """Reconstruction error: ||X - A @ S|| / ||X||."""
-    data = raw.get_data()
-    sources = ica.get_sources(raw).get_data()
-    reconstructed = ica.mixing_matrix_ @ sources
+    """Reconstruction error: ||X - apply(X)|| / ||X|| with no components excluded.
 
-    # MNE applies PCA/whitening, so reconstruct through the full pipeline
+    With exclude=[], apply() should reconstruct perfectly (error ~0).
+    This tests that the MNE ICA object is correctly populated.
+    """
+    data = raw.get_data()
     try:
         raw_recon = ica.apply(raw.copy(), verbose=False)
         recon_data = raw_recon.get_data()
@@ -332,110 +342,217 @@ def compute_reconstruction_error(ica, raw):
     return float(err)
 
 
+def compute_psd_alpha_peaks(ica, raw):
+    """Count ICs with alpha-band (8-13 Hz) spectral peaks.
+
+    Brain sources typically show a clear alpha peak above the 1/f
+    background. This metric is method-agnostic (no training bias).
+    """
+    from mne.time_frequency import psd_array_welch
+
+    sources = ica.get_sources(raw).get_data()
+    sfreq = raw.info["sfreq"]
+
+    psds, freqs = psd_array_welch(sources, sfreq=sfreq, fmin=1, fmax=45,
+                                   n_fft=int(2 * sfreq), verbose=False)
+
+    alpha_mask = (freqs >= 8) & (freqs <= 13)
+    flank_mask = ((freqs >= 4) & (freqs < 8)) | ((freqs > 13) & (freqs <= 20))
+
+    n_alpha = 0
+    for i in range(psds.shape[0]):
+        alpha_power = psds[i, alpha_mask].mean()
+        flank_power = psds[i, flank_mask].mean()
+        if flank_power > 0 and alpha_power / flank_power > 2.0:
+            n_alpha += 1
+
+    return {"alpha_peaked_ics": n_alpha, "n_components": int(psds.shape[0])}
+
+
+def compute_mir(ica, raw):
+    """Mutual Information Reduction via k-NN entropy estimator.
+
+    MIR = sum H_marginal(original) - sum H_marginal(sources).
+    Higher MIR = more independent sources = better ICA.
+    Uses Kozachenko-Leonenko estimator. Subsamples for speed.
+    """
+    from scipy.special import digamma
+
+    def entropy_knn(x, k=5):
+        x = np.sort(x.ravel())
+        n = len(x)
+        dists = np.zeros(n)
+        for i in range(n):
+            d = np.abs(x - x[i])
+            d_sorted = np.sort(d)
+            dists[i] = d_sorted[k] if k < n else d_sorted[-1]
+        dists = np.maximum(dists, 1e-300)
+        return digamma(n) - digamma(k) + np.log(2) + np.mean(np.log(dists))
+
+    sources = ica.get_sources(raw).get_data()
+    original = raw.get_data()[:sources.shape[0]]
+
+    # Subsample to 50k points for speed
+    n_sub = min(50000, sources.shape[1])
+    rng = np.random.RandomState(42)
+    idx = rng.choice(sources.shape[1], n_sub, replace=False)
+
+    n_ch = sources.shape[0]
+    h_orig = sum(entropy_knn(original[i, idx]) for i in range(n_ch))
+    h_comp = sum(entropy_knn(sources[i, idx]) for i in range(n_ch))
+
+    return {"mir": float(h_orig - h_comp), "n_components": n_ch}
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════════════════════════════════
 
-def main():
-    logger.info("=" * 65)
-    logger.info("HIGH-DENSITY EEG VALIDATION (ds004505)")
-    logger.info("=" * 65)
+def _run_metrics(ica, raw, method):
+    """Compute all metrics for a fitted ICA, returning a result dict."""
+    result = {
+        "time": 0.0,  # filled by caller
+        "n_iter": int(ica.n_iter_),
+        "n_components": int(ica.n_components_),
+    }
 
-    # Load and preprocess
-    raw, ch_groups = load_and_preprocess(SUBJECT)
-    n_components = determine_n_components(raw)
+    # ICLabel
+    logger.info("    [%s] Computing ICLabel...", time.strftime("%H:%M:%S"))
+    try:
+        ic_counts, _ = run_iclabel(ica, raw)
+        result["iclabel"] = ic_counts
+    except Exception as e:
+        logger.warning("    ICLabel failed: %s", e)
+        result["iclabel"] = {"error": str(e)}
 
-    all_results = {}
+    # Kurtosis
+    logger.info("    [%s] Computing kurtosis...", time.strftime("%H:%M:%S"))
+    try:
+        kurt = compute_kurtosis_quality(ica, raw)
+        result["kurtosis"] = kurt
+        logger.info("    Kurtosis: %d/%d brain-like ICs (mean=%.1f)",
+                     kurt["brain_like_kurtosis"], kurt["n_components"],
+                     kurt["kurtosis_mean"])
+    except Exception as e:
+        logger.warning("    Kurtosis failed: %s", e)
 
-    for method in METHODS:
-        logger.info("\n--- %s ---", method.upper())
-        try:
-            ica, dt = run_ica_method(raw, method, n_components, max_iter=MAX_ITER)
+    # Reconstruction error
+    logger.info("    [%s] Computing reconstruction error...", time.strftime("%H:%M:%S"))
+    try:
+        recon_err = compute_reconstruction_error(ica, raw)
+        result["reconstruction_error"] = recon_err
+        logger.info("    Reconstruction error: %.2e", recon_err)
+    except Exception as e:
+        logger.warning("    Reconstruction error failed: %s", e)
 
-            result = {
-                "time": dt,
-                "n_iter": int(ica.n_iter_),
-                "n_components": int(ica.n_components_),
-            }
+    # PSD alpha peaks
+    logger.info("    [%s] Computing PSD alpha peaks...", time.strftime("%H:%M:%S"))
+    try:
+        psd = compute_psd_alpha_peaks(ica, raw)
+        result["psd_alpha"] = psd
+        logger.info("    Alpha-peaked ICs: %d/%d", psd["alpha_peaked_ics"], psd["n_components"])
+    except Exception as e:
+        logger.warning("    PSD alpha failed: %s", e)
 
-            # ICLabel (needs onnxruntime or pytorch)
-            try:
-                ic_counts, _ = run_iclabel(ica, raw)
-                result["iclabel"] = ic_counts
-            except Exception as e:
-                logger.warning("    ICLabel failed: %s", e)
-                result["iclabel"] = {"error": str(e)}
+    # MIR
+    logger.info("    [%s] Computing MIR...", time.strftime("%H:%M:%S"))
+    try:
+        mir = compute_mir(ica, raw)
+        result["mir"] = mir
+        logger.info("    MIR: %.2f", mir["mir"])
+    except Exception as e:
+        logger.warning("    MIR failed: %s", e)
 
-            # Kurtosis quality (always works, no extra deps)
-            try:
-                kurt = compute_kurtosis_quality(ica, raw)
-                result["kurtosis"] = kurt
-                logger.info(
-                    "    Kurtosis: %d/%d brain-like ICs",
-                    kurt["brain_like_kurtosis"],
-                    kurt["n_components"],
-                )
-            except Exception as e:
-                logger.warning("    Kurtosis scoring failed: %s", e)
+    return result
 
-            # Reconstruction error
-            try:
-                recon_err = compute_reconstruction_error(ica, raw)
-                result["reconstruction_error"] = recon_err
-                logger.info("    Reconstruction error: %.2e", recon_err)
-            except Exception as e:
-                logger.warning("    Reconstruction error failed: %s", e)
 
-            all_results[method] = result
-
-        except Exception as e:
-            logger.error("    %s FAILED: %s", method, e)
-            all_results[method] = {"error": str(e)}
-
-    # Save results
-    output_file = RESULTS_DIR / "highdens_validation.json"
-    with open(output_file, "w") as f:
-        json.dump(all_results, f, indent=2, default=str)
-    logger.info("\nResults saved to: %s", output_file)
-
-    # Summary table
-    logger.info("\n" + "=" * 75)
-    logger.info("SUMMARY")
-    logger.info("=" * 75)
+def _print_summary(results, methods):
+    """Print a summary table for one HP sweep."""
+    logger.info("\n" + "=" * 80)
     header = (
         f"{'Method':<10s} {'Time':>7s} {'Iter':>5s} {'nIC':>4s} "
         f"{'Brain':>6s} {'B>50%':>6s} {'B>70%':>6s} "
-        f"{'Musc':>5s} {'Eye':>4s} {'Kurt':>5s} {'Err':>9s}"
+        f"{'Kurt':>5s} {'Alpha':>6s} {'MIR':>8s} {'Err':>9s}"
     )
     logger.info(header)
-    logger.info("-" * 75)
-
-    for method in METHODS:
-        r = all_results.get(method, {})
+    logger.info("-" * 80)
+    for method in methods:
+        r = results.get(method, {})
         if "error" in r:
-            logger.info("%s  FAILED: %s", method, r["error"][:50])
+            logger.info("%-10s  FAILED: %s", method, str(r["error"])[:50])
             continue
-
         ic = r.get("iclabel", {})
         kurt = r.get("kurtosis", {})
+        psd = r.get("psd_alpha", {})
+        mir = r.get("mir", {})
         err = r.get("reconstruction_error", float("nan"))
-
         logger.info(
-            "%-10s %7.1f %5d %4d %6s %6s %6s %5s %4s %5s %9.1e",
-            method,
-            r["time"],
-            r["n_iter"],
-            r["n_components"],
-            ic.get("brain", "?"),
-            ic.get("brain_50pct", "?"),
-            ic.get("brain_70pct", "?"),
-            ic.get("muscle", "?"),
-            ic.get("eye", "?"),
-            kurt.get("brain_like_kurtosis", "?"),
+            "%-10s %7.1f %5d %4d %6s %6s %6s %5s %6s %8s %9.1e",
+            method, r["time"], r["n_iter"], r["n_components"],
+            ic.get("brain", "?"), ic.get("brain_50pct", "?"), ic.get("brain_70pct", "?"),
+            kurt.get("brain_like_kurtosis", "?"), psd.get("alpha_peaked_ics", "?"),
+            f"{mir['mir']:.1f}" if isinstance(mir, dict) and "mir" in mir else "?",
             err,
         )
+    logger.info("=" * 80)
 
-    logger.info("=" * 75)
+
+def main():
+    logger.info("=" * 65)
+    logger.info("HIGH-DENSITY EEG BENCHMARK (ds004505)")
+    logger.info("  Subjects: %s", SUBJECTS)
+    logger.info("  HP filters: %s Hz", HP_FILTERS)
+    logger.info("  Methods: %s", METHODS)
+    logger.info("  MAX_ITER: %d", MAX_ITER)
+    logger.info("=" * 65)
+
+    all_results = {}
+
+    for subject in SUBJECTS:
+        logger.info("\n########## %s ##########", subject)
+        all_results[subject] = {}
+
+        for hp_freq in HP_FILTERS:
+            sweep_key = f"hp{hp_freq}"
+            logger.info("\n===== %s | HP = %.1f Hz =====", subject, hp_freq)
+
+            try:
+                raw, ch_groups = load_and_preprocess(subject, hp_freq=hp_freq)
+            except FileNotFoundError as e:
+                logger.warning("Skipping %s: %s", subject, e)
+                break
+
+            n_components = determine_n_components(raw)
+            sweep_results = {}
+
+            for method in METHODS:
+                logger.info("\n--- %s | %s | HP %.1f Hz ---", method.upper(), subject, hp_freq)
+                try:
+                    ica, dt = run_ica_method(raw, method, n_components, max_iter=MAX_ITER)
+                    result = _run_metrics(ica, raw, method)
+                    result["time"] = dt
+                    sweep_results[method] = result
+                except Exception as e:
+                    logger.error("    %s FAILED: %s", method, e)
+                    import traceback; traceback.print_exc()
+                    sweep_results[method] = {"error": str(e)}
+
+            all_results[subject][sweep_key] = sweep_results
+
+            # Print summary for this sweep
+            _print_summary(sweep_results, METHODS)
+
+            # Save incrementally (in case job gets killed)
+            output_file = RESULTS_DIR / f"benchmark_{subject}_hp{hp_freq}hz.json"
+            with open(output_file, "w") as f:
+                json.dump(sweep_results, f, indent=2, default=str)
+            logger.info("Saved: %s", output_file)
+
+    # Save combined results
+    combined_file = RESULTS_DIR / "benchmark_combined.json"
+    with open(combined_file, "w") as f:
+        json.dump(all_results, f, indent=2, default=str)
+    logger.info("\nAll results saved to: %s", combined_file)
 
 
 if __name__ == "__main__":
