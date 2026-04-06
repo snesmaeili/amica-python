@@ -354,10 +354,18 @@ class AmicaResult:
     def to_mne(self, info):
         """Convert results to MNE ICA object.
 
-        .. deprecated::
-            Prefer :func:`amica_python.fit_ica` which properly handles MNE's
-            whitening pipeline. ``to_mne()`` builds MNE internals manually
-            and may miss attributes required by newer MNE versions.
+        AMICA decomposes as: ``sources = W @ S @ (x - mean)``
+        where W is the unmixing matrix in whitened space and S is the
+        sphering/whitening matrix.
+
+        MNE's ICA reconstructs via:
+        ``unmixing_full = unmixing_ @ pca_components_[:n_comp]``
+        ``mixing_full = pca_components_.T @ mixing_``
+
+        To make these equivalent we use QR decomposition on the combined
+        transform ``W @ S`` to extract an orthonormal ``pca_components_``
+        (Q.T) and a square ``unmixing_matrix_`` (R), satisfying MNE's
+        requirement that ``pca_components_`` has orthonormal rows.
 
         Parameters
         ----------
@@ -370,42 +378,61 @@ class AmicaResult:
             Fitted MNE ICA object compatible with plot_components(),
             get_sources(), apply(), and ICLabel.
         """
-        warnings.warn(
-            "AmicaResult.to_mne() is deprecated. Use fit_ica(raw) instead, "
-            "which properly handles MNE's whitening/PCA pipeline.",
-            DeprecationWarning, stacklevel=2,
-        )
         try:
             from mne.preprocessing import ICA
         except ImportError:
             raise ImportError("MNE-Python is required for to_mne().")
 
-        n_components = self.unmixing_matrix_white_.shape[0]
-        n_channels = self.whitener_.shape[1]
+        W = np.asarray(self.unmixing_matrix_white_)  # (n_comp, n_comp)
+        S = np.asarray(self.whitener_)               # (n_comp, n_ch)
+        n_components = W.shape[0]
+        n_channels = S.shape[1]
+
+        # Combined transform: sources = WS @ (x - mean)
+        WS = W @ S  # (n_comp, n_ch)
+
+        # QR decomposition: WS.T = Q @ R  =>  WS = R.T @ Q.T
+        # Q.T is orthonormal (n_comp, n_ch) — use as pca_components_
+        # R.T is square (n_comp, n_comp) — use as unmixing_matrix_ (before norms)
+        Q, R = np.linalg.qr(WS.T, mode='reduced')  # Q: (n_ch, n_comp), R: (n_comp, n_comp)
+        pca_components = Q.T   # (n_comp, n_ch) — orthonormal rows
+        unmixing_raw = R.T     # (n_comp, n_comp) — square
+
+        # Verify: WS ≈ unmixing_raw @ pca_components
+        # (this is exact by QR construction)
 
         ica = ICA(n_components=n_components, method='infomax')
 
-        # AMICA decomposition: sources = W @ S @ (x - mean)
-        # MNE decomposition: sources = unmixing_ @ pca_components_ @ pre_whiten(x - pca_mean_)
+        # Build full orthonormal pca_components (n_ch, n_ch).
+        # First n_comp rows = Q.T from QR. Complete to orthonormal basis
+        # using SVD of Q to get its orthogonal complement.
+        U_full, _, Vt_full = np.linalg.svd(Q, full_matrices=True)
+        # U_full: (n_ch, n_ch) orthonormal columns
+        # First n_comp columns span same space as Q
+        # Remaining columns span the null space
+        pca_full = U_full.T  # (n_ch, n_ch) — orthonormal rows
+        # But we need the first n_comp rows to be exactly Q.T (= pca_components)
+        # SVD may reorder/flip signs. Use Q directly and append null space.
+        null_space = U_full[:, n_components:]  # (n_ch, n_ch - n_comp)
+        pca_full = np.vstack([pca_components, null_space.T])
+        ica.pca_components_ = pca_full
 
-        ica.pca_components_ = np.asarray(self.whitener_)
         ica.pca_mean_ = np.asarray(self.mean_)
-
-        # pre_whitener_ — AMICA handles whitening itself, set to ones
         ica.pre_whitener_ = np.ones((n_channels, 1))
 
-        # pca_explained_variance_ from whitener row norms
-        row_norms = np.sqrt(np.sum(np.asarray(self.whitener_) ** 2, axis=1))
-        row_norms[row_norms == 0] = 1.0
-        pca_var = 1.0 / (row_norms ** 2)
-        pca_explained_variance = np.ones(max(n_channels, n_components))
-        pca_explained_variance[:n_components] = pca_var
+        # pca_explained_variance_ — MNE divides unmixing by sqrt(variance)
+        # during fit(). We need to match that convention.
+        # Since our pca_components are orthonormal, the "variance" each
+        # component explains is the squared column norm of unmixing_raw.
+        col_var = np.sum(unmixing_raw ** 2, axis=0)
+        col_var[col_var == 0] = 1.0
+        pca_explained_variance = np.ones(n_channels)
+        pca_explained_variance[:n_components] = col_var
         ica.pca_explained_variance_ = pca_explained_variance
 
-        # Apply same normalization MNE does internally
-        norms = np.sqrt(pca_var)
-        norms[norms == 0] = 1.0
-        ica.unmixing_matrix_ = np.asarray(self.unmixing_matrix_white_) / norms
+        # Apply MNE's normalization: unmixing /= sqrt(variance)
+        norms = np.sqrt(col_var)
+        ica.unmixing_matrix_ = unmixing_raw / norms
         ica.mixing_matrix_ = np.linalg.pinv(ica.unmixing_matrix_)
 
         # Metadata

@@ -47,7 +47,7 @@ MAX_DURATION_SEC = None  # Use all available data (kappa-driven)
 METHODS = ["amica", "picard", "infomax", "fastica"]
 MAX_ITER = int(os.environ.get("MAX_ITER", "500"))
 AMICA_NUM_MIX = 3  # Frank 2023 recommendation
-HP_FILTERS = [1.0, 2.0]  # Klug 2024: sweep HP cutoff for mobile EEG
+HP_FILTERS = [float(x) for x in os.environ.get("HP_FILTERS", "1.0,2.0").split(",")]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -357,14 +357,14 @@ def compute_psd_alpha_peaks(ica, raw):
                                    n_fft=int(2 * sfreq), verbose=False)
 
     alpha_mask = (freqs >= 8) & (freqs <= 13)
-    flank_mask = ((freqs >= 4) & (freqs < 8)) | ((freqs > 13) & (freqs <= 20))
+    flank_mask = ((freqs >= 2) & (freqs < 7)) | ((freqs > 14) & (freqs <= 30))
 
     n_alpha = 0
     for i in range(psds.shape[0]):
-        alpha_power = psds[i, alpha_mask].mean()
         flank_power = psds[i, flank_mask].mean()
-        if flank_power > 0 and alpha_power / flank_power > 2.0:
-            n_alpha += 1
+        if flank_power > 1e-10:
+            if psds[i, alpha_mask].mean() / flank_power > 1.5:
+                n_alpha += 1
 
     return {"alpha_peaked_ics": n_alpha, "n_components": int(psds.shape[0])}
 
