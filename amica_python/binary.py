@@ -154,43 +154,11 @@ class BinaryAmica:
             res.dewhitener_ = np.asarray(desphere)
             res.mean_ = np.asarray(mean)
             
-            # Reconstruct mixing matrix in sensor space
-            # A_sensor = desphere @ A_amica
-            # W_sensor = W_amica @ sphere
-            # Note: res.mixing_matrix from _load_results is A_amica (whitened space)
-            
-            A_amica = res.mixing_matrix
-            W_amica = res.unmixing_matrix
-            
-            res.mixing_matrix = desphere @ A_amica
-            # Warning: W_amica might be W * S or just W? AMICA outputs W.
-            # So unmixing_sensor = W_amica @ sphere
-            # But wait, AMICA computes W such that u = W * x.
-            # Here x is sphered data.
-            # So u = W_amica * (S * (raw - mean))
-            # So full W is W_amica * S.
-            
-            # Note: res.unmixing_matrix currently stores W_amica. 
-            # We should probably store the effective unmixing?
-            # But AmicaResult (from solver.py) stores 'unmixing_matrix' as the one in whitened space?
-            # Let's check solver.py: 
-            # "unmixing_matrix : ... Unmixing matrix W in whitened space."
-            # "mixing_matrix : ... Mixing matrix ... that projects sources to sensors."
-            # Wait, solver.py says:
-            # "mixing_sensor = np.asarray(desphere @ A)"
-            # "self.result_ = AmicaResult(mixing_matrix=mixing_sensor, unmixing_matrix=np.asarray(W), ...)"
-            # So 'mixing_matrix' is Sensor Loop, 'unmixing_matrix' is Whitened Loop.
-            # This is slightly inconsistent but we'll follow solver.py convention.
-            
-            # Check if solver.py constructs unmixing_sensor?
-            # "unmixing_sensor = np.asarray(W @ sphere)" -> Line 663
-            # But AmicaResult is initialized with `unmixing_matrix=np.asarray(W)`.
-            # So `result.unmixing_matrix` is Whitened W.
-            # `result.mixing_matrix` is Sensor A.
-            
-            # Let's stick to that.
-            res.mixing_matrix = desphere @ A_amica # Store Sensor A
-            res.unmixing_matrix = W_amica          # Store Whitened W
+            # Reconstruct sensor-space matrices with real preprocessing info
+            A_white = res.mixing_matrix_white_
+            W_white = res.unmixing_matrix_white_
+            res.mixing_matrix_sensor_ = desphere @ A_white
+            res.unmixing_matrix_sensor_ = W_white @ sphere
             
             return res
             
@@ -322,11 +290,13 @@ class BinaryAmica:
         gm = np.ones(1) # Single model
         
         return AmicaResult(
-            mixing_matrix=A,  # This is A_whitened
-            unmixing_matrix=W, # This is W_whitened
-            whitener_=S,       # Identity usually
-            dewhitener_=np.eye(n_components), # Placeholder
-            mean_=np.zeros(n_components),     # Placeholder
+            unmixing_matrix_white_=W,
+            mixing_matrix_white_=A,
+            unmixing_matrix_sensor_=W @ S,  # Populated later in run()
+            mixing_matrix_sensor_=np.linalg.pinv(S) @ A,  # Populated later
+            whitener_=S,
+            dewhitener_=np.eye(n_components),  # Placeholder
+            mean_=np.zeros(n_components),      # Placeholder
             alpha_=alpha if alpha is not None else np.zeros((n_mix, n_components)),
             mu_=mu if mu is not None else np.zeros((n_mix, n_components)),
             rho_=rho if rho is not None else np.zeros((n_mix, n_components)),
@@ -335,5 +305,5 @@ class BinaryAmica:
             gm_=gm,
             log_likelihood=LL,
             n_iter=len(LL),
-            converged=False # No easy flag
+            converged=False,
         )

@@ -227,11 +227,14 @@ def _amica_step(
 
     # 9. Update model center c via reparameterization (Palmer tech report)
     # c_new = posterior-weighted mean of x, then adjust mu to compensate
-    c_new = jnp.mean(data_white, axis=1)  # Single-model: uniform weighting
-    delta_c = c_new - c
-    # Adjust source means to compensate: mu -= W @ delta_c (per source per mix)
-    W_delta_c = jnp.dot(W_new, delta_c)  # (n_components,)
-    mu_new = mu_new - W_delta_c[None, :]  # Broadcast over n_mix
+    if do_mean:
+        c_new = jnp.mean(data_white, axis=1)  # Single-model: uniform weighting
+        delta_c = c_new - c
+        # Adjust source means to compensate: mu -= W @ delta_c (per source per mix)
+        W_delta_c = jnp.dot(W_new, delta_c)  # (n_components,)
+        mu_new = mu_new - W_delta_c[None, :]  # Broadcast over n_mix
+    else:
+        c_new = c
 
     # 10. Scaling (Fortran doscaling)
     if doscaling:
@@ -252,13 +255,30 @@ def _amica_step(
 @dataclass
 class AmicaResult:
     """Container for AMICA results.
-    
+
+    Matrix naming convention
+    ------------------------
+    AMICA operates in whitened space. Matrices are stored in both spaces
+    with explicit suffixes to avoid ambiguity:
+
+    - ``*_white_`` — whitened space (after sphering)
+    - ``*_sensor_`` — original sensor space
+
+    The relationship is::
+
+        sources = unmixing_matrix_white_ @ whitener_ @ (data - mean_)
+        data    = mixing_matrix_sensor_ @ sources + mean_
+
     Attributes
     ----------
-    mixing_matrix : np.ndarray, shape (n_channels, n_components) or (n_models, n_channels, n_components)
-        Mixing matrix A = (W @ sphere)^(-1) that projects sources to sensors.
-    unmixing_matrix : np.ndarray, shape (n_components, n_components) or (n_models, n_components, n_components)
-        Unmixing matrix W in whitened space.
+    unmixing_matrix_white_ : np.ndarray, shape (n_components, n_components)
+        Unmixing matrix W in whitened space: ``sources = W @ x_white``.
+    mixing_matrix_white_ : np.ndarray, shape (n_components, n_components)
+        Mixing matrix A in whitened space: ``x_white = A @ sources + c``.
+    unmixing_matrix_sensor_ : np.ndarray, shape (n_components, n_channels)
+        Full unmixing in sensor space: ``W @ sphere``.
+    mixing_matrix_sensor_ : np.ndarray, shape (n_channels, n_components)
+        Full mixing in sensor space: ``desphere @ A``.
     whitener_ : np.ndarray, shape (n_components, n_channels)
         Sphering/whitening matrix S.
     dewhitener_ : np.ndarray, shape (n_channels, n_components)
@@ -288,8 +308,10 @@ class AmicaResult:
     converged : bool
         Whether the algorithm converged.
     """
-    mixing_matrix: np.ndarray
-    unmixing_matrix: np.ndarray
+    unmixing_matrix_white_: np.ndarray
+    mixing_matrix_white_: np.ndarray
+    unmixing_matrix_sensor_: np.ndarray
+    mixing_matrix_sensor_: np.ndarray
     whitener_: np.ndarray
     dewhitener_: np.ndarray
     mean_: np.ndarray
@@ -306,52 +328,98 @@ class AmicaResult:
     converged: bool = False
     data_scale: float = 1.0
 
+    @property
+    def unmixing_matrix(self):
+        """Deprecated. Use ``unmixing_matrix_white_`` instead."""
+        warnings.warn(
+            "AmicaResult.unmixing_matrix is deprecated. "
+            "Use unmixing_matrix_white_ (whitened space) or "
+            "unmixing_matrix_sensor_ (sensor space) instead.",
+            DeprecationWarning, stacklevel=2,
+        )
+        return self.unmixing_matrix_white_
+
+    @property
+    def mixing_matrix(self):
+        """Deprecated. Use ``mixing_matrix_sensor_`` instead."""
+        warnings.warn(
+            "AmicaResult.mixing_matrix is deprecated. "
+            "Use mixing_matrix_sensor_ (sensor space) or "
+            "mixing_matrix_white_ (whitened space) instead.",
+            DeprecationWarning, stacklevel=2,
+        )
+        return self.mixing_matrix_sensor_
+
     def to_mne(self, info):
         """Convert results to MNE ICA object.
-        
+
+        .. deprecated::
+            Prefer :func:`amica_python.fit_ica` which properly handles MNE's
+            whitening pipeline. ``to_mne()`` builds MNE internals manually
+            and may miss attributes required by newer MNE versions.
+
         Parameters
         ----------
         info : mne.Info
-            Measurement info.
-            
+            Measurement info (from the Raw/Epochs used for fitting).
+
         Returns
         -------
         ica : mne.preprocessing.ICA
-            MNE ICA object (fitted).
+            Fitted MNE ICA object compatible with plot_components(),
+            get_sources(), apply(), and ICLabel.
         """
+        warnings.warn(
+            "AmicaResult.to_mne() is deprecated. Use fit_ica(raw) instead, "
+            "which properly handles MNE's whitening/PCA pipeline.",
+            DeprecationWarning, stacklevel=2,
+        )
         try:
             from mne.preprocessing import ICA
-            from mne.utils import check_version
         except ImportError:
             raise ImportError("MNE-Python is required for to_mne().")
-            
-        # We use a custom method name or 'infomax' to bypass validation if needed
-        # But creating an ICA object state directly is safer.
-        
-        # Initialize empty ICA
-        n_components = self.unmixing_matrix.shape[0]
+
+        n_components = self.unmixing_matrix_white_.shape[0]
+        n_channels = self.whitener_.shape[1]
+
         ica = ICA(n_components=n_components, method='infomax')
-        
-        # Manually populate attributes
-        # MNE expects:
-        # unmixing_matrix_ : (n_components, n_pca_components)
-        # pca_components_ : (n_pca_components, n_channels)
-        # pca_mean_ : (n_channels,)
-        # mixing_matrix_ : (n_channels, n_components) (derived property usually, but we can check usage)
-        
-        # Note: AMICA's unmixing W is (n_comp, n_comp) relative to whitened data.
-        # AMICA's whitener S is (n_comp, n_channels).
-        
-        ica.unmixing_matrix_ = self.unmixing_matrix
-        ica.pca_components_ = self.whitener_
-        ica.pca_mean_ = self.mean_
-        
-        # Set info
-        ica.info = info
+
+        # AMICA decomposition: sources = W @ S @ (x - mean)
+        # MNE decomposition: sources = unmixing_ @ pca_components_ @ pre_whiten(x - pca_mean_)
+
+        ica.pca_components_ = np.asarray(self.whitener_)
+        ica.pca_mean_ = np.asarray(self.mean_)
+
+        # pre_whitener_ — AMICA handles whitening itself, set to ones
+        ica.pre_whitener_ = np.ones((n_channels, 1))
+
+        # pca_explained_variance_ from whitener row norms
+        row_norms = np.sqrt(np.sum(np.asarray(self.whitener_) ** 2, axis=1))
+        row_norms[row_norms == 0] = 1.0
+        pca_var = 1.0 / (row_norms ** 2)
+        pca_explained_variance = np.ones(max(n_channels, n_components))
+        pca_explained_variance[:n_components] = pca_var
+        ica.pca_explained_variance_ = pca_explained_variance
+
+        # Apply same normalization MNE does internally
+        norms = np.sqrt(pca_var)
+        norms[norms == 0] = 1.0
+        ica.unmixing_matrix_ = np.asarray(self.unmixing_matrix_white_) / norms
+        ica.mixing_matrix_ = np.linalg.pinv(ica.unmixing_matrix_)
+
+        # Metadata
         ica.n_components_ = n_components
-        ica._is_fitted = True
-        
-        # MNE < 1.0 might differ, but this standard for modern MNE
+        ica.info = info
+        ica.ch_names = info['ch_names'][:n_channels]
+        ica.n_iter_ = self.n_iter
+        ica.current_fit = 'raw'
+        ica.method = 'amica'
+
+        try:
+            ica._ica_names = [f"ICA{ii:03d}" for ii in range(n_components)]
+        except Exception:
+            pass
+
         return ica
 
 
@@ -383,7 +451,7 @@ class Amica:
     >>> config = AmicaConfig(max_iter=500, num_mix_comps=3)
     >>> amica = Amica(config, random_state=42)
     >>> result = amica.fit(data)  # data: (n_channels, n_samples)
-    >>> activations = result.unmixing_matrix @ result.whitener_ @ (data - result.mean_[:, None])
+    >>> activations = result.unmixing_matrix_white_ @ result.whitener_ @ (data - result.mean_[:, None])
     
     Notes
     -----
@@ -693,10 +761,11 @@ class Amica:
             # Checkpoint
             if self.config.outdir is not None and self.config.writestep > 0 and (iteration + 1) % self.config.writestep == 0:
                 # Need to bring back to CPU for saving
-                mixing_sensor = np.asarray(desphere @ A) # desphere is numpy
                 self.result_ = AmicaResult(
-                    mixing_matrix=mixing_sensor,
-                    unmixing_matrix=np.asarray(W),
+                    unmixing_matrix_white_=np.asarray(W),
+                    mixing_matrix_white_=np.asarray(A),
+                    unmixing_matrix_sensor_=np.asarray(W @ sphere),
+                    mixing_matrix_sensor_=np.asarray(desphere @ A),
                     whitener_=np.asarray(sphere),
                     dewhitener_=np.asarray(desphere),
                     mean_=np.asarray(mean),
@@ -736,14 +805,11 @@ class Amica:
                 )
 
         # ========== Construct Result ==========
-        # Convert from whitened space to sensor space
-        # A_sensor = desphere @ A_whitened
-        mixing_sensor = np.asarray(desphere @ A)
-        unmixing_sensor = np.asarray(W @ sphere)
-        
         self.result_ = AmicaResult(
-            mixing_matrix=mixing_sensor,
-            unmixing_matrix=np.asarray(W),
+            unmixing_matrix_white_=np.asarray(W),
+            mixing_matrix_white_=np.asarray(A),
+            unmixing_matrix_sensor_=np.asarray(W @ sphere),
+            mixing_matrix_sensor_=np.asarray(desphere @ A),
             whitener_=np.asarray(sphere),
             dewhitener_=np.asarray(desphere),
             mean_=np.asarray(mean),
@@ -889,7 +955,7 @@ class Amica:
         # Apply full unmixing: W @ sphere @ (x - mean)
         centered = data - self.result_.mean_[:, None]
         whitened = self.result_.whitener_ @ centered
-        sources = self.result_.unmixing_matrix @ whitened
+        sources = self.result_.unmixing_matrix_white_ @ whitened
         
         return sources
     
@@ -912,7 +978,7 @@ class Amica:
         sources = np.asarray(sources, dtype=np.float64)
         
         # data = A @ sources + mean = desphere @ A_white @ sources + mean
-        data = self.result_.mixing_matrix @ sources + self.result_.mean_[:, None]
+        data = self.result_.mixing_matrix_sensor_ @ sources + self.result_.mean_[:, None]
         
         return data / self.result_.data_scale
     
@@ -934,8 +1000,8 @@ class Amica:
         def save_binary(name: str, arr: np.ndarray):
             arr.astype('<f8').T.tofile(outdir / name)
         
-        save_binary('A', self.result_.mixing_matrix)
-        save_binary('W', self.result_.unmixing_matrix)
+        save_binary('A', self.result_.mixing_matrix_sensor_)
+        save_binary('W', self.result_.unmixing_matrix_white_)
         save_binary('S', self.result_.whitener_)
         save_binary('mean', self.result_.mean_)
         save_binary('alpha', self.result_.alpha_)

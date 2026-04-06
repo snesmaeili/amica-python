@@ -22,8 +22,10 @@ class TestAmicaBasic(unittest.TestCase):
         model = Amica(config=config, random_state=42)
         result = model.fit(data)
 
-        self.assertEqual(result.unmixing_matrix.shape, (n_channels, n_channels))
-        self.assertEqual(result.mixing_matrix.shape, (n_channels, n_channels))
+        self.assertEqual(result.unmixing_matrix_white_.shape, (n_channels, n_channels))
+        self.assertEqual(result.mixing_matrix_white_.shape, (n_channels, n_channels))
+        self.assertEqual(result.unmixing_matrix_sensor_.shape, (n_channels, n_channels))
+        self.assertEqual(result.mixing_matrix_sensor_.shape, (n_channels, n_channels))
         self.assertGreater(len(result.log_likelihood), 0)
 
     def test_transform_inverse(self):
@@ -123,7 +125,7 @@ class TestAmicaSourceSeparation(unittest.TestCase):
 
         # Check Amari index (permutation-invariant separation quality)
         # Perfect separation: each row/col of W @ A_true has one dominant entry
-        C = result.unmixing_matrix @ result.whitener_ @ A_true
+        C = result.unmixing_matrix_white_ @ result.whitener_ @ A_true
         # Normalize rows and columns
         C = C / np.max(np.abs(C), axis=1, keepdims=True)
 
@@ -134,6 +136,109 @@ class TestAmicaSourceSeparation(unittest.TestCase):
 
         self.assertLess(amari, 0.3,
                         f"Amari index too high ({amari:.3f}), poor separation")
+
+
+class TestMatrixConventions(unittest.TestCase):
+    """Test explicit matrix naming and consistency."""
+
+    def test_matrix_shapes_and_consistency(self):
+        """Test all four matrices have correct shapes and are consistent."""
+        from amica_python import Amica, AmicaConfig
+
+        rng = np.random.RandomState(42)
+        n_channels, n_samples = 6, 2000
+        S = rng.laplace(size=(n_channels, n_samples))
+        A_true = rng.randn(n_channels, n_channels)
+        data = A_true @ S
+
+        config = AmicaConfig(max_iter=50, num_mix_comps=2, do_newton=False)
+        model = Amica(config=config, random_state=42)
+        result = model.fit(data)
+
+        # White-space matrices are square (n_comp x n_comp)
+        self.assertEqual(result.unmixing_matrix_white_.shape,
+                         (n_channels, n_channels))
+        self.assertEqual(result.mixing_matrix_white_.shape,
+                         (n_channels, n_channels))
+
+        # Sensor-space matrices bridge channels and components
+        self.assertEqual(result.unmixing_matrix_sensor_.shape,
+                         (n_channels, n_channels))
+        self.assertEqual(result.mixing_matrix_sensor_.shape,
+                         (n_channels, n_channels))
+
+        # W_white @ A_white ≈ I
+        WA = result.unmixing_matrix_white_ @ result.mixing_matrix_white_
+        np.testing.assert_allclose(WA, np.eye(n_channels), atol=1e-6)
+
+        # sensor unmixing = W_white @ sphere
+        expected_sensor = result.unmixing_matrix_white_ @ result.whitener_
+        np.testing.assert_allclose(
+            result.unmixing_matrix_sensor_, expected_sensor, atol=1e-10)
+
+        # sensor mixing = desphere @ A_white
+        expected_mix = result.dewhitener_ @ result.mixing_matrix_white_
+        np.testing.assert_allclose(
+            result.mixing_matrix_sensor_, expected_mix, atol=1e-10)
+
+    def test_sensor_roundtrip(self):
+        """Test mixing_sensor @ unmixing_sensor ≈ I for full-rank data."""
+        from amica_python import Amica, AmicaConfig
+
+        rng = np.random.RandomState(42)
+        n_channels, n_samples = 4, 1000
+        data = rng.randn(n_channels, n_samples)
+
+        config = AmicaConfig(max_iter=20, num_mix_comps=2, do_newton=False)
+        model = Amica(config=config, random_state=42)
+        result = model.fit(data)
+
+        # mixing_sensor @ unmixing_sensor should be close to identity
+        product = result.mixing_matrix_sensor_ @ result.unmixing_matrix_sensor_
+        np.testing.assert_allclose(product, np.eye(n_channels), atol=1e-6)
+
+    def test_deprecated_properties_warn(self):
+        """Test that old property names emit DeprecationWarning."""
+        from amica_python import Amica, AmicaConfig
+        import warnings
+
+        rng = np.random.RandomState(42)
+        data = rng.randn(4, 500)
+
+        config = AmicaConfig(max_iter=10, num_mix_comps=2, do_newton=False)
+        model = Amica(config=config, random_state=42)
+        result = model.fit(data)
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            _ = result.unmixing_matrix
+            self.assertTrue(any(issubclass(x.category, DeprecationWarning)
+                                for x in w))
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            _ = result.mixing_matrix
+            self.assertTrue(any(issubclass(x.category, DeprecationWarning)
+                                for x in w))
+
+    def test_deprecated_properties_return_correct_values(self):
+        """Test deprecated properties return the right matrices."""
+        from amica_python import Amica, AmicaConfig
+        import warnings
+
+        rng = np.random.RandomState(42)
+        data = rng.randn(4, 500)
+
+        config = AmicaConfig(max_iter=10, num_mix_comps=2, do_newton=False)
+        model = Amica(config=config, random_state=42)
+        result = model.fit(data)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            np.testing.assert_array_equal(
+                result.unmixing_matrix, result.unmixing_matrix_white_)
+            np.testing.assert_array_equal(
+                result.mixing_matrix, result.mixing_matrix_sensor_)
 
 
 class TestAmicaConfig(unittest.TestCase):
@@ -228,6 +333,115 @@ class TestMNEIntegration(unittest.TestCase):
         # Test that standard MNE methods work
         sources = ica.get_sources(raw)
         self.assertEqual(sources.get_data().shape[0], 4)
+
+
+class TestMNEDirectVsShim(unittest.TestCase):
+    """Test that direct path matches old Infomax shim path."""
+
+    def test_direct_vs_shim_sources_correlated(self):
+        """Both paths should produce correlated source activations."""
+        try:
+            import mne
+        except ImportError:
+            self.skipTest("MNE-Python not installed")
+
+        from amica_python import fit_ica
+
+        info = mne.create_info(
+            ch_names=[f"EEG{i:03d}" for i in range(6)],
+            sfreq=256, ch_types="eeg",
+        )
+        rng = np.random.RandomState(42)
+        data = rng.randn(6, 3000) * 1e-6
+        raw = mne.io.RawArray(data, info)
+
+        common_params = dict(
+            n_components=3, max_iter=30, num_mix=2, random_state=42,
+            fit_params={"do_newton": False},
+        )
+
+        ica_direct = fit_ica(raw.copy(), _use_infomax_shim=False, **common_params)
+        ica_shim = fit_ica(raw.copy(), _use_infomax_shim=True, **common_params)
+
+        src_direct = ica_direct.get_sources(raw).get_data()
+        src_shim = ica_shim.get_sources(raw).get_data()
+
+        # Sources should be highly correlated (up to sign/permutation)
+        corr = np.abs(np.corrcoef(src_direct, src_shim)[:3, 3:])
+        # Each direct source should match some shim source
+        max_corrs = np.max(corr, axis=1)
+        self.assertTrue(
+            np.all(max_corrs > 0.9),
+            f"Source correlation too low: {max_corrs}"
+        )
+
+
+class TestMNEIntegrationGuards(unittest.TestCase):
+    """Test MNE integration guards and metadata."""
+
+    def test_multi_model_raises(self):
+        """fit_ica() with num_models > 1 should raise ValueError."""
+        try:
+            import mne
+        except ImportError:
+            self.skipTest("MNE-Python not installed")
+
+        from amica_python import fit_ica
+
+        sfreq = 256
+        info = mne.create_info(
+            ch_names=[f"EEG{i:03d}" for i in range(4)],
+            sfreq=sfreq, ch_types="eeg",
+        )
+        rng = np.random.RandomState(42)
+        raw = mne.io.RawArray(rng.randn(4, 1000) * 1e-6, info)
+
+        with self.assertRaises(ValueError, msg="num_models > 1"):
+            fit_ica(raw, n_components=2, max_iter=10,
+                    fit_params={"num_models": 2, "do_newton": False})
+
+    def test_amica_result_attached(self):
+        """fit_ica() should attach amica_result_ to the ICA object."""
+        try:
+            import mne
+        except ImportError:
+            self.skipTest("MNE-Python not installed")
+
+        from amica_python import fit_ica
+
+        info = mne.create_info(
+            ch_names=[f"EEG{i:03d}" for i in range(4)],
+            sfreq=256, ch_types="eeg",
+        )
+        rng = np.random.RandomState(42)
+        raw = mne.io.RawArray(rng.randn(4, 1000) * 1e-6, info)
+
+        ica = fit_ica(raw, n_components=2, max_iter=10,
+                      fit_params={"do_newton": False})
+        self.assertTrue(hasattr(ica, "amica_result_"))
+        self.assertIsNotNone(ica.amica_result_)
+
+    def test_apply_preserves_shape(self):
+        """ica.apply() should preserve data shape."""
+        try:
+            import mne
+        except ImportError:
+            self.skipTest("MNE-Python not installed")
+
+        from amica_python import fit_ica
+
+        info = mne.create_info(
+            ch_names=[f"EEG{i:03d}" for i in range(4)],
+            sfreq=256, ch_types="eeg",
+        )
+        rng = np.random.RandomState(42)
+        data = rng.randn(4, 1000) * 1e-6
+        raw = mne.io.RawArray(data, info)
+
+        ica = fit_ica(raw, n_components=2, max_iter=10,
+                      fit_params={"do_newton": False})
+        raw_clean = ica.apply(raw.copy())
+        self.assertEqual(raw_clean.get_data().shape, data.shape)
 
 
 if __name__ == "__main__":

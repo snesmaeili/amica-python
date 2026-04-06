@@ -123,7 +123,7 @@ def run_synthetic_benchmark():
     model = Amica(config=config, random_state=42)
     result = model.fit(X)
     t_amica = time.time() - t0
-    W_full = result.unmixing_matrix @ result.whitener_
+    W_full = result.unmixing_matrix_white_ @ result.whitener_
     amari_amica = amari_index(W_full, A_true)
     algorithms["AMICA"] = {"amari": amari_amica, "time": t_amica, "n_iter": result.n_iter}
     print(f"    Amari index: {amari_amica:.4f}, Time: {t_amica:.1f}s, Iters: {result.n_iter}")
@@ -395,7 +395,7 @@ def run_parameter_sensitivity():
         model = Amica(config, random_state=42)
         res = model.fit(X_full)
         dt = time.time() - t0
-        W_full = res.unmixing_matrix @ res.whitener_
+        W_full = res.unmixing_matrix_white_ @ res.whitener_
         ai = amari_index(W_full, A)
         mix_results[n_mix] = {"amari": float(ai), "time": dt,
                               "final_ll": float(res.log_likelihood[-1])}
@@ -414,7 +414,7 @@ def run_parameter_sensitivity():
         model = Amica(config, random_state=42)
         res = model.fit(X_sub)
         dt = time.time() - t0
-        W_full = res.unmixing_matrix @ res.whitener_
+        W_full = res.unmixing_matrix_white_ @ res.whitener_
         ai = amari_index(W_full, A)
         kappa_results[kappa] = {"amari": float(ai), "time": dt, "n_samples": n_samples,
                                 "final_ll": float(res.log_likelihood[-1])}
@@ -428,7 +428,7 @@ def run_parameter_sensitivity():
         config = AmicaConfig(max_iter=300, num_mix_comps=3, do_newton=True)
         model = Amica(config, random_state=seed)
         res = model.fit(X_full)
-        W_full = res.unmixing_matrix @ res.whitener_
+        W_full = res.unmixing_matrix_white_ @ res.whitener_
         ai = amari_index(W_full, A)
         seed_results[seed] = {"amari": float(ai), "final_ll": float(res.log_likelihood[-1])}
     amaris = [v["amari"] for v in seed_results.values()]

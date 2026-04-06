@@ -24,7 +24,8 @@ RESULTS_DIR = Path(__file__).parent / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
 
 
-def run_python_amica(data, max_iter=200, num_mix=3, do_newton=True, seed=42):
+def run_python_amica(data, max_iter=200, num_mix=3, do_newton=True,
+                     do_reject=False, seed=42):
     """Run amica-python on data."""
     from amica_python import Amica, AmicaConfig
 
@@ -32,7 +33,7 @@ def run_python_amica(data, max_iter=200, num_mix=3, do_newton=True, seed=42):
         max_iter=max_iter,
         num_mix_comps=num_mix,
         do_newton=do_newton,
-        do_reject=False,
+        do_reject=do_reject,
         rho0=1.5,
         minrho=1.0,
         maxrho=2.0,
@@ -154,7 +155,7 @@ def compare_results(py_result, mat_result, n_channels):
         print(f"    LL diff:   {comparison['ll_diff_pct']:.2f}%")
 
     # 2. Unmixing matrix comparison (correlation-based, permutation-invariant)
-    W_py = py_result.unmixing_matrix  # (n, n) in whitened space
+    W_py = py_result.unmixing_matrix_white_  # (n, n) in whitened space
     W_mat = mat_result.get('W', None)
 
     if W_mat is not None:
@@ -216,11 +217,20 @@ def main():
 
     rng = np.random.RandomState(42)
 
-    # Test configurations
+    # Test configurations: full matrix of num_mix x newton x reject
     configs = [
-        {"name": "M1_m3_newton", "max_iter": 200, "num_mix": 3, "do_newton": True},
-        {"name": "M1_m3_natgrad", "max_iter": 200, "num_mix": 3, "do_newton": False},
-        {"name": "M1_m1_newton", "max_iter": 200, "num_mix": 1, "do_newton": True},
+        {"name": "M1_m1_newton",     "max_iter": 200, "num_mix": 1, "do_newton": True,  "do_reject": False},
+        {"name": "M1_m1_natgrad",    "max_iter": 200, "num_mix": 1, "do_newton": False, "do_reject": False},
+        {"name": "M1_m3_newton",     "max_iter": 200, "num_mix": 3, "do_newton": True,  "do_reject": False},
+        {"name": "M1_m3_natgrad",    "max_iter": 200, "num_mix": 3, "do_newton": False, "do_reject": False},
+        {"name": "M1_m5_newton",     "max_iter": 200, "num_mix": 5, "do_newton": True,  "do_reject": False},
+        {"name": "M1_m5_natgrad",    "max_iter": 200, "num_mix": 5, "do_newton": False, "do_reject": False},
+        {"name": "M1_m1_newton_rej", "max_iter": 200, "num_mix": 1, "do_newton": True,  "do_reject": True},
+        {"name": "M1_m1_natgrad_rej","max_iter": 200, "num_mix": 1, "do_newton": False, "do_reject": True},
+        {"name": "M1_m3_newton_rej", "max_iter": 200, "num_mix": 3, "do_newton": True,  "do_reject": True},
+        {"name": "M1_m3_natgrad_rej","max_iter": 200, "num_mix": 3, "do_newton": False, "do_reject": True},
+        {"name": "M1_m5_newton_rej", "max_iter": 200, "num_mix": 5, "do_newton": True,  "do_reject": True},
+        {"name": "M1_m5_natgrad_rej","max_iter": 200, "num_mix": 5, "do_newton": False, "do_reject": True},
     ]
 
     # Generate synthetic data
@@ -242,7 +252,7 @@ def main():
         print("\n  [Python] Running amica-python...")
         py_result = run_python_amica(
             data, max_iter=cfg['max_iter'], num_mix=cfg['num_mix'],
-            do_newton=cfg['do_newton']
+            do_newton=cfg['do_newton'], do_reject=cfg.get('do_reject', False)
         )
         print(f"  [Python] Final LL: {py_result.log_likelihood[-1]:.6f}")
 

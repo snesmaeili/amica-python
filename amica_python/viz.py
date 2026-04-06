@@ -124,7 +124,7 @@ def plot_source_densities(result, picks=None, data=None, n_bins=100,
         data = np.asarray(data, dtype=np.float64)
         centered = data - result.mean_[:, None]
         whitened = result.whitener_ @ centered
-        sources = result.unmixing_matrix @ whitened
+        sources = result.unmixing_matrix_white_ @ whitened
 
     n_plots = len(picks)
     n_rows = max(1, (n_plots + n_cols - 1) // n_cols)
@@ -233,7 +233,7 @@ def plot_model_responsibilities(result, data, ax=None, show=True):
     whitened = result.whitener_ @ centered
 
     # For multi-model, unmixing_matrix has shape (n_models, n_comp, n_comp)
-    W_all = np.asarray(result.unmixing_matrix)
+    W_all = np.asarray(result.unmixing_matrix_white_)
     alpha_all = np.asarray(result.alpha_)
     mu_all = np.asarray(result.mu_)
     beta_all = np.asarray(result.sbeta_)
@@ -475,7 +475,7 @@ def plot_parameter_summary(result, data=None, show=True):
         data = np.asarray(data, dtype=np.float64)
         centered = data - result.mean_[:, None]
         whitened = result.whitener_ @ centered
-        sources = result.unmixing_matrix @ whitened
+        sources = result.unmixing_matrix_white_ @ whitened
 
     colors_ic = plt.cm.tab10(np.linspace(0, 0.4, n_show))
     for comp_i in range(n_show):
@@ -508,6 +508,83 @@ def plot_parameter_summary(result, data=None, show=True):
     ax4.set_yticks([])
 
     fig.suptitle("AMICA Parameter Summary", fontsize=14, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    if show:
+        plt.show()
+    return fig
+
+
+def plot_component_metrics(result, data=None, picks=None, show=True):
+    """Summary bar chart of AMICA-specific per-component metrics.
+
+    Parameters
+    ----------
+    result : AmicaResult
+        Fitted AMICA result.
+    data : ndarray, shape (n_channels, n_samples) or None
+        If provided, source kurtosis is included.
+    picks : array-like or None
+        Component indices to plot. If None, plots all.
+    show : bool
+        Whether to display the figure.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    """
+    import matplotlib.pyplot as plt
+    from . import metrics as m
+
+    n_comp = result.unmixing_matrix_white_.shape[0]
+    if picks is None:
+        picks = np.arange(n_comp)
+    picks = np.asarray(picks)
+
+    rho_m = m.rho_mean(result)[picks]
+    ent = m.mixture_entropy(result)[picks]
+    multimodal = m.multimodality_flag(result)[picks]
+
+    n_rows = 3 if data is None else 4
+    fig, axes = plt.subplots(n_rows, 1, figsize=(max(6, len(picks) * 0.4), 2.5 * n_rows),
+                             sharex=True)
+
+    x = np.arange(len(picks))
+    labels = [f"IC{i}" for i in picks]
+
+    # Rho mean
+    colors_rho = ["#d62728" if rho < 1.5 else "#1f77b4" for rho in rho_m]
+    axes[0].bar(x, rho_m, color=colors_rho, edgecolor="k", linewidth=0.5)
+    axes[0].axhline(1.0, color="grey", ls="--", lw=0.8, label="Laplacian")
+    axes[0].axhline(2.0, color="grey", ls=":", lw=0.8, label="Gaussian")
+    axes[0].set_ylabel("Mean rho")
+    axes[0].set_title("Shape Parameter (rho)")
+    axes[0].legend(fontsize=7)
+
+    # Mixture entropy
+    axes[1].bar(x, ent, color="#2ca02c", edgecolor="k", linewidth=0.5)
+    axes[1].set_ylabel("Entropy (nats)")
+    axes[1].set_title("Mixture Weight Entropy")
+
+    # Multimodality
+    axes[2].bar(x, multimodal.astype(float), color="#ff7f0e",
+                edgecolor="k", linewidth=0.5)
+    axes[2].set_ylabel("Multimodal")
+    axes[2].set_yticks([0, 1])
+    axes[2].set_yticklabels(["No", "Yes"])
+    axes[2].set_title("Multimodality Flag")
+
+    if data is not None:
+        kurt = m.source_kurtosis(result, data)[picks]
+        axes[3].bar(x, kurt, color="#9467bd", edgecolor="k", linewidth=0.5)
+        axes[3].set_ylabel("Excess Kurtosis")
+        axes[3].set_title("Source Kurtosis")
+
+    axes[-1].set_xticks(x)
+    axes[-1].set_xticklabels(labels, rotation=45 if len(picks) > 10 else 0,
+                             fontsize=8)
+    axes[-1].set_xlabel("Component")
+
+    fig.suptitle("AMICA Component Metrics", fontsize=14, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     if show:
         plt.show()

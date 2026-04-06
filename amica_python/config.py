@@ -154,7 +154,7 @@ class AmicaConfig:
     min_grad_norm: float = 1e-6
     use_grad_norm: bool = False
     use_min_dll: bool = True
-    max_decs: int = 3
+    max_decs: int = 5
     max_incs: int = 10
     
     # Numerical stability

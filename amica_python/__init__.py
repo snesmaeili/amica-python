@@ -17,12 +17,12 @@ References
 from .config import AmicaConfig
 from .solver import Amica, AmicaResult
 
-__all__ = ["Amica", "AmicaConfig", "AmicaResult", "amica", "fit_ica", "viz"]
+__all__ = ["Amica", "AmicaConfig", "AmicaResult", "amica", "fit_ica", "viz", "metrics"]
 
 
 def fit_ica(inst, n_components=None, max_iter=2000, num_mix=3,
             random_state=None, picks=None, reject=None, flat=None,
-            decim=None, fit_params=None, verbose=None):
+            decim=None, fit_params=None, verbose=None, **kwargs):
     """Fit ICA using AMICA on MNE Raw or Epochs data.
 
     See :func:`amica_python.mne_integration.fit_ica` for full docs.
@@ -32,7 +32,7 @@ def fit_ica(inst, n_components=None, max_iter=2000, num_mix=3,
         inst, n_components=n_components, max_iter=max_iter,
         num_mix=num_mix, random_state=random_state, picks=picks,
         reject=reject, flat=flat, decim=decim, fit_params=fit_params,
-        verbose=verbose,
+        verbose=verbose, **kwargs,
     )
 __version__ = "0.1.0"
 
@@ -92,7 +92,7 @@ def amica(X, n_components=None, whiten=False, return_n_iter=False,
     solver = Amica(config, random_state=random_state)
     result = solver.fit(data)
 
-    W = result.unmixing_matrix  # (n_components, n_components)
+    W = result.unmixing_matrix_white_  # (n_components, n_components)
 
     if return_n_iter:
         return W, result.n_iter
