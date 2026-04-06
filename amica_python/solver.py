@@ -74,6 +74,7 @@ def _amica_step(
     log_det_sphere: float,
     # Config scalars
     newt_start_iter: int,
+    newt_ramp: int,
     iteration: int,
     invsigmin: float,
     invsigmax: float,
@@ -119,7 +120,7 @@ def _amica_step(
     #   After ramp: lrate_eff = newtrate
     # Note: lrate_base is already the (possibly decayed) base rate.
     # The /2 here is the Fortran convention, NOT an additional decay.
-    newt_ramp = 10  # TODO: pass from config when newt_ramp is added to AmicaConfig
+    # newt_ramp is now passed from AmicaConfig via the caller
     in_newton = do_newton & (iteration >= newt_start_iter)
     ramp_progress = jnp.clip(
         (iteration - newt_start_iter + 1.0) / newt_ramp, 0.0, 1.0
@@ -630,6 +631,7 @@ class Amica:
                 data_white, log_det_sphere,
                 # Config scalars
                 self.config.newt_start,
+                self.config.newt_ramp,
                 iteration,
                 self.config.invsigmin, self.config.invsigmax,
                 self.config.minrho, self.config.maxrho,

@@ -166,13 +166,33 @@ def fit_ica(
     # Direct MNE ICA construction (no throwaway Infomax)
     # ================================================================
     import mne
-    from mne.io import BaseRaw
 
-    # Resolve picks
-    picks_idx = mne.io.pick._picks_to_idx(inst.info, picks, exclude="bads")
+    # Resolve picks using public MNE API
+    if picks is None:
+        # Default: all data channels (eeg, meg, etc.) excluding bads — same as MNE ICA
+        picks_idx = mne.pick_types(inst.info, meg=True, eeg=True, ref_meg=False,
+                                   exclude="bads")
+    elif isinstance(picks, str):
+        picks_idx = mne.pick_types(inst.info, **{picks: True}, exclude="bads")
+    else:
+        picks_idx = np.asarray(picks, dtype=int)
 
-    # Extract data
-    raw_data = _extract_data(inst, picks_idx)
+    # Extract data, applying reject/flat if provided for Raw
+    from mne.io import BaseRaw as _BaseRaw
+    from mne.epochs import BaseEpochs as _BaseEpochs
+
+    if isinstance(inst, _BaseRaw) and (reject is not None or flat is not None):
+        # Create fixed-length epochs to apply rejection (matches MNE ICA behavior)
+        events = mne.make_fixed_length_events(inst, duration=1.0)
+        epochs = mne.Epochs(inst, events, tmin=0, tmax=1.0 - 1.0 / inst.info["sfreq"],
+                            picks=picks_idx, reject=reject, flat=flat,
+                            baseline=None, preload=True, verbose=verbose)
+        raw_data = np.concatenate(epochs.get_data(), axis=-1)
+        # picks_idx already applied inside Epochs
+        raw_data = raw_data.reshape(len(picks_idx), -1) if raw_data.ndim == 3 else raw_data
+    else:
+        raw_data = _extract_data(inst, picks_idx)
+
     n_channels, n_samples = raw_data.shape
 
     # Resolve n_components
@@ -253,10 +273,12 @@ def fit_ica(
     # Metadata
     ica.n_iter_ = result.n_iter
     ica.n_samples_ = n_samples
-    ica.current_fit = "raw" if isinstance(inst, BaseRaw) else "epochs"
+    ica.current_fit = "raw" if isinstance(inst, _BaseRaw) else "epochs"
     ica.method = "amica"
     ica.labels_ = dict()
     ica.exclude = []
+    ica.reject_ = reject
+    ica.drop_inds_ = np.array([], dtype=int)
 
     # Internal naming
     try:
