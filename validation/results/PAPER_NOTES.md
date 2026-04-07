@@ -175,11 +175,98 @@ A combined `benchmark_combined.json` is written by the per-subject script
 
 ---
 
-## 5. Pending / known issues
+## 5. Known issues — AMICA quality regression vs literature
 
-- Multi-subject aggregate figures (`fig1_multimetric`, `fig2_topoplots`,
-  `fig3_summary_table`) require running
-  `validation/generate_publication_figures.py` after job `58939673` finishes
-  and `highdens_validation.json` is rebuilt from the per-subject JSONs.
-- ICLabel under reports brain ICs on this dataset for *all* methods (1/30 at
-  >50% on sub-01). This is a property of the data, not AMICA.
+After cross-checking against the AMICA literature (Palmer 2008/2011,
+Delorme 2012, Frank 2023/2025, Klug 2024) and the OLD v1 CPU run on the
+same subject, two distinct problems are visible.
+
+### Issue A: dataset preprocessing is too light
+
+OLD v1 CPU run (sub-01, 200 iter), per-IC excess kurtosis percentiles:
+
+| Method  | 10%   | 50% (median) | 90%    | max     |
+|---------|-------|--------------|--------|---------|
+| AMICA   | 994   | 1690         | 3414   | 5255    |
+| Picard  | 1090  | 6531         | 24051  | 58986   |
+| Infomax | 1076  | 6444         | 21733  | 47761   |
+| FastICA | 984   | 3916         | 9988   | 23417   |
+
+Expected kurtosis on properly cleaned scalp EEG (Delorme 2012, Klug 2024):
+**median 2–6, max < 30**. Our medians are 2–3 orders of magnitude too
+high — the ICs are essentially "spike detectors" picking up amplitude
+outliers from the mobile-EEG TableTennis task. **All four ICA methods
+agree on this**, so it is a property of the data, not of AMICA.
+
+→ **Fix:** add ASR (or amplitude-rejection-based per-window cleaning,
+following Klug 2024) before ICA. Frank 2025 / Klug 2024 both treat this
+as mandatory preprocessing for mobile EEG.
+
+### Issue B: GPU AMICA at 2000 iter is *worse* than CPU AMICA at 200 iter
+
+| Run                          | Brain (raw) | Brain >50% | MIR (nats) | Iter | Time |
+|------------------------------|-------------|------------|------------|------|------|
+| CPU 200 iter (v1, Apr 5)     | **4**       | **2**      | **−339**   | 200  | 2027 s |
+| GPU 2000 iter (v3, Apr 6)    | 1           | 1          | −6.4       | 2000 | 72 s |
+| Picard (CPU 200 iter)        | 6           | 4          | −273       | 200  | 908 s |
+| Infomax (CPU 200 iter)       | 9           | 6          | −411       | 200  | 513 s |
+
+Expected behaviour from the literature (same scalp-EEG regime,
+~120 ch / 5 min, n_comp=30, num_mix=3):
+
+* **AMICA's MIR magnitude should *exceed* Picard/Infomax by 5–15 %**
+  (Delorme 2012, Table 4). Our GPU AMICA is **22× weaker** in MIR than
+  Picard/Infomax. The CPU AMICA is closer (≈1.2× Picard).
+* AMICA should recover **≥30 % brain ICs** (Delorme 2012: ~48 %
+  near-dipolar at rv<10 %; Klug 2024: 35–55 % brain). On a 30-component
+  decomposition that's ~10 brain ICs. Our GPU AMICA finds **1**.
+* AMICA's per-IC kurtosis distribution should look **roughly the same as
+  Picard/Infomax**, with median 2–6. The GPU AMICA produces a median
+  >2000 — i.e. its components are *more* spike-like than Picard/Infomax
+  on the same data (which is itself badly preprocessed).
+* `converged` should reach `True` well before 2000 iter (Frank 2025
+  recommends ≤3000 as a hard cap). Our GPU AMICA still has
+  `converged=False` at 2000 iter and the LL slope is essentially flat at
+  ~1e-4 per step — i.e. *stuck on a plateau*, not climbing.
+
+→ **Likely root causes** (most → least likely, per Palmer 2011):
+
+1. **Sphering / PCA-30 reduction is broken on the GPU code path.**
+   Config sets `do_sphere=True, pcakeep=30` but the reduction may not be
+   numerically equivalent to MATLAB AMICA's whitener. The fact that CPU
+   AMICA is ~50× better in MIR on the same data with the same config
+   strongly points here.
+2. **Newton M-step update produces tiny weight changes** — consistent
+   with the LL plateauing at very small slope. Verify
+   `amica_python/updates.py:compute_newton_terms` against Palmer 2008
+   eq. 6–9.
+3. **`rho` (generalized-Gaussian shape) is partially frozen.**
+   Confirmed by inspecting `amica_result.rho_` from the latest pickle:
+
+       mix 0 ρ: [1.0]*30  ← never updates
+       mix 1 ρ: [1.00…2.00] (free)
+       mix 2 ρ: [1.0]*30  ← never updates
+
+   In MATLAB AMICA all three mixture exponents update freely after the
+   warm-up. Mixes 0 and 2 being pinned at exactly 1.0 (Laplacian) for
+   *every* component across 2000 iterations is a hard signal that the
+   ρ M-step is silently no-op-ing for those mixtures (probably an
+   indexing or `jax.lax.cond` bug in `amica_python/updates.py`). This
+   alone can cap LL improvement at the very small ~3.6 nats we observe.
+4. **Random seed quirk on GPU** — re-running the GPU job once gave
+   `brain=2` and once `brain=0` with otherwise identical config, hinting
+   at non-deterministic atomics in the JAX path. Set
+   `XLA_FLAGS=--xla_gpu_deterministic_ops=true` and re-run for parity.
+
+### Suggested next steps
+
+- Let job array `58939673` finish so we have the **broken-data baseline
+  across 25 subjects** — useful for the "preprocessing matters" panel of
+  the paper.
+- In parallel, write a `validation/preprocessing_v2.py` that adds ASR
+  (`mne.preprocessing.compute_proj_eog`, or
+  `meegkit.asr.ASR`) before ICA, and rerun on a single subject to
+  confirm the kurtosis distribution drops to the literature range.
+- Once ASR is in place, repeat the AMICA-only sweep with both the
+  current GPU code path and the CPU/MATLAB reference to localise issue B
+  to a specific code stage.

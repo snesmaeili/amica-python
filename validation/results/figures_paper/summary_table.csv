@@ -1,0 +1,5 @@
+method,n_subjects,time_mean,time_sd,n_iter_mean,n_iter_sd,iclabel_brain_mean,iclabel_brain_sd,iclabel_brain_50pct_mean,iclabel_brain_50pct_sd,iclabel_brain_70pct_mean,iclabel_brain_70pct_sd,iclabel_brain_80pct_mean,iclabel_brain_80pct_sd,kurt_brain_like_mean,kurt_brain_like_sd,alpha_peaked_mean,alpha_peaked_sd,mir_mean,mir_sd,recon_error_mean,recon_error_sd
+amica,1,2027.0753710269928,0.0,200.0,0.0,4.0,0.0,2.0,0.0,0.0,0.0,,,0.0,0.0,0.0,0.0,-339.2626535260053,0.0,4.954779414233568e-15,0.0
+picard,1,908.3114001750946,0.0,200.0,0.0,6.0,0.0,4.0,0.0,3.0,0.0,,,1.0,0.0,0.0,0.0,-273.2541882163365,0.0,3.054510428664191e-15,0.0
+infomax,1,513.0622751712799,0.0,200.0,0.0,9.0,0.0,6.0,0.0,2.0,0.0,,,1.0,0.0,0.0,0.0,-411.58406432627703,0.0,8.659724741015225e-15,0.0
+fastica,1,233.9634644985199,0.0,134.0,0.0,4.0,0.0,4.0,0.0,1.0,0.0,,,1.0,0.0,0.0,0.0,-280.7724966430285,0.0,2.5613419967914605e-15,0.0

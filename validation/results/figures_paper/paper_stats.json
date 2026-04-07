@@ -1,0 +1,230 @@
+{
+  "iclabel_brain_50pct": {
+    "friedman": {
+      "n": 1,
+      "p": NaN
+    },
+    "pairwise": {
+      "amica_vs_picard": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "amica_vs_infomax": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "amica_vs_fastica": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "picard_vs_infomax": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "picard_vs_fastica": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "infomax_vs_fastica": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      }
+    }
+  },
+  "iclabel_brain_70pct": {
+    "friedman": {
+      "n": 1,
+      "p": NaN
+    },
+    "pairwise": {
+      "amica_vs_picard": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "amica_vs_infomax": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "amica_vs_fastica": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "picard_vs_infomax": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "picard_vs_fastica": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "infomax_vs_fastica": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      }
+    }
+  },
+  "kurt_brain_like": {
+    "friedman": {
+      "n": 1,
+      "p": NaN
+    },
+    "pairwise": {
+      "amica_vs_picard": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "amica_vs_infomax": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "amica_vs_fastica": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "picard_vs_infomax": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "picard_vs_fastica": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "infomax_vs_fastica": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      }
+    }
+  },
+  "alpha_peaked": {
+    "friedman": {
+      "n": 1,
+      "p": NaN
+    },
+    "pairwise": {
+      "amica_vs_picard": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "amica_vs_infomax": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "amica_vs_fastica": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "picard_vs_infomax": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "picard_vs_fastica": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "infomax_vs_fastica": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      }
+    }
+  },
+  "mir": {
+    "friedman": {
+      "n": 1,
+      "p": NaN
+    },
+    "pairwise": {
+      "amica_vs_picard": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "amica_vs_infomax": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "amica_vs_fastica": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "picard_vs_infomax": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "picard_vs_fastica": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "infomax_vs_fastica": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      }
+    }
+  },
+  "time": {
+    "friedman": {
+      "n": 1,
+      "p": NaN
+    },
+    "pairwise": {
+      "amica_vs_picard": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "amica_vs_infomax": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "amica_vs_fastica": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "picard_vs_infomax": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "picard_vs_fastica": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      },
+      "infomax_vs_fastica": {
+        "n": 1,
+        "p": NaN,
+        "stat": NaN
+      }
+    }
+  }
+}
