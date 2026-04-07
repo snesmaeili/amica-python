@@ -11,3 +11,7 @@ build/
 *.fdt
 *.set
 tmpdata*.fdt
+# Slurm job logs
+*.out
+*.err
+slurm-*.out

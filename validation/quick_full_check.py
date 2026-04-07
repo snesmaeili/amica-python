@@ -25,6 +25,7 @@ FIGURES_DIR = RESULTS_DIR / "figures"
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_ITER = 200
+AMICA_MAX_ITER = 2000  # AMICA converges much slower than Picard/Infomax in iter count
 N_COMP = 30  # fewer for quick check
 METHODS = ["amica", "picard", "infomax"]
 
@@ -62,8 +63,9 @@ def run_all_methods(raw, n_comp):
     amica_result = None
 
     for method in METHODS:
+        method_iter = AMICA_MAX_ITER if method == "amica" else MAX_ITER
         print(f"\n{'='*50}")
-        print(f"  {method.upper()} ({n_comp} comp, {MAX_ITER} iter)")
+        print(f"  {method.upper()} ({n_comp} comp, {method_iter} iter)")
         print(f"{'='*50}")
 
         if method == "amica":
@@ -71,7 +73,7 @@ def run_all_methods(raw, n_comp):
             data = raw.get_data()
             t0 = time.time()
             config = AmicaConfig(
-                max_iter=MAX_ITER, num_mix_comps=3, do_newton=True,
+                max_iter=method_iter, num_mix_comps=3, do_newton=True,
                 do_mean=True, do_sphere=True, pcakeep=n_comp,
             )
             solver = Amica(config, random_state=42)
@@ -88,7 +90,7 @@ def run_all_methods(raw, n_comp):
             t0 = time.time()
             ica = mne.preprocessing.ICA(
                 n_components=n_comp, method=method, random_state=42,
-                max_iter=MAX_ITER, fit_params=fit_params,
+                max_iter=method_iter, fit_params=fit_params,
             )
             ica.fit(raw, verbose=False)
             dt = time.time() - t0
@@ -304,9 +306,9 @@ def fig_amica_specific(amica_result, raw):
     """Fig: AMICA-specific visualizations (convergence, source densities, etc.)."""
     from amica_python.viz import plot_parameter_summary
 
-    # Pass AMICA sources (not raw data) for correct source density visualization
-    sources = ica_dict["amica"].get_sources(raw).get_data()
-    fig = plot_parameter_summary(amica_result, data=sources[:, :50000], show=False)
+    # plot_parameter_summary expects raw channel data; it whitens and unmixes internally.
+    data = raw.get_data()
+    fig = plot_parameter_summary(amica_result, data=data[:, :50000], show=False)
     fig.suptitle("AMICA Parameter Summary — ds004505 sub-01", fontsize=12, fontweight="bold", y=1.01)
     fig.savefig(FIGURES_DIR / "check_amica_params.png", dpi=200, bbox_inches="tight")
     fig.savefig(FIGURES_DIR / "check_amica_params.pdf", bbox_inches="tight")
