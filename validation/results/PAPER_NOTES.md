@@ -240,19 +240,40 @@ Expected behaviour from the literature (same scalp-EEG regime,
    with the LL plateauing at very small slope. Verify
    `amica_python/updates.py:compute_newton_terms` against Palmer 2008
    eq. 6–9.
-3. **`rho` (generalized-Gaussian shape) is partially frozen.**
-   Confirmed by inspecting `amica_result.rho_` from the latest pickle:
+3. **`rho` (generalized-Gaussian shape) collapses to the lower bound
+   for the side mixtures.** Confirmed by inspecting
+   `amica_result.rho_` from the latest pickle:
 
-       mix 0 ρ: [1.0]*30  ← never updates
-       mix 1 ρ: [1.00…2.00] (free)
-       mix 2 ρ: [1.0]*30  ← never updates
+       mix 0 ρ: [1.0]*30  ← all clipped at minrho
+       mix 1 ρ: [1.00…2.00] (free, broad distribution)
+       mix 2 ρ: [1.0]*30  ← all clipped at minrho
 
-   In MATLAB AMICA all three mixture exponents update freely after the
-   warm-up. Mixes 0 and 2 being pinned at exactly 1.0 (Laplacian) for
-   *every* component across 2000 iterations is a hard signal that the
-   ρ M-step is silently no-op-ing for those mixtures (probably an
-   indexing or `jax.lax.cond` bug in `amica_python/updates.py`). This
-   alone can cap LL improvement at the very small ~3.6 nats we observe.
+   I initially suspected this was a code bug in `update_rho_gradient`
+   (e.g. `digamma`/`trigamma` mismatch). I verified against the
+   reference Fortran AMICA source on github.com/sccn/amica
+   (`amica15.f90` lines 1811–1820 and `funmod2.f90` lines 146–149) and
+   confirmed:
+
+   - `psifun` IS the digamma function (Cody/Strecok/Thacher rational
+     Chebyshev approximation, identical to scipy `digamma`).
+   - The Python `update_rho_gradient` formula matches the Fortran
+     `rho + rholrate * (1 - (rho/psifun(1+1/rho)) * drho_numer/drho_denom)`
+     exactly, including the factor of `rho` inside `logab` for
+     `drho_numer = sum(u * |y|^rho * rho*log|y|)`.
+
+   So the **Python rho M-step is faithful to MATLAB/Fortran AMICA**.
+   The collapse-to-minrho behaviour is the algorithm responding
+   correctly to the *data*: with kurtosis medians ~2000, the sample
+   distribution is so heavy-tailed that the gradient term
+   `(rho/psifun)·(num/den)` is consistently > 1 for the side mixtures,
+   driving rho monotonically downward until it hits the 1.0 floor.
+
+   **Conclusion:** issues A and B collapse into a single root cause —
+   the mobile-EEG TableTennis data is fed into ICA without
+   amplitude/ASR rejection. Once the data is properly cleaned
+   (Klug 2024 pipeline) we expect rho updates to stabilise in the
+   1.5–2.0 range and the brain-IC count to recover into the
+   literature range.
 4. **Random seed quirk on GPU** — re-running the GPU job once gave
    `brain=2` and once `brain=0` with otherwise identical config, hinting
    at non-deterministic atomics in the JAX path. Set
