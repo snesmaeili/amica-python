@@ -44,14 +44,16 @@ plt.rcParams.update({"font.size": 10, "figure.dpi": 150})
 # ═══════════════════════════════════════════════════════════════
 # 1. PREPROCESSING
 # ═══════════════════════════════════════════════════════════════
-def load_and_preprocess(subject="sub-01"):
+def load_and_preprocess(subject="sub-01", hp_freq=1.0, iclean_mode="none"):
     from validation.run_highdens_validation import (
         load_and_preprocess as _load,
         determine_n_components,
     )
-    raw, ch_groups = _load(subject)
+    raw, ch_groups, iclean_meta = _load(
+        subject, hp_freq=hp_freq, iclean_mode=iclean_mode,
+    )
     n_comp = determine_n_components(raw, max_components=N_COMP)
-    return raw, n_comp
+    return raw, n_comp, iclean_meta
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -409,37 +411,62 @@ def fig_summary_table(results):
 # MAIN
 # ═══════════════════════════════════════════════════════════════
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--subject", default="sub-01")
+    parser.add_argument("--hp", type=float, default=1.0,
+                        help="High-pass cutoff in Hz (>= 1.0).")
+    parser.add_argument(
+        "--iclean", choices=["none", "dual", "pseudo", "combo"],
+        default=os.environ.get("ICLEAN", "none"),
+        help="Studnicki iCanClean mode (env ICLEAN, default 'none').",
+    )
+    args = parser.parse_args()
+
     import jax
     print(f"JAX backend: {jax.default_backend()}, devices: {jax.devices()}")
+    print(f"Config: subject={args.subject} hp={args.hp} iclean={args.iclean}")
 
     # 1. Load data
     print("\n[1/5] Loading and preprocessing...")
-    raw, n_comp = load_and_preprocess()
+    raw, n_comp, iclean_meta = load_and_preprocess(
+        subject=args.subject, hp_freq=args.hp, iclean_mode=args.iclean,
+    )
 
     # 2. Run all methods
     print("\n[2/5] Running ICA methods...")
     ica_dict, times, amica_result = run_all_methods(raw, n_comp)
 
-    # 3. Save ICA objects
+    # 3. Save ICA objects (suffix with iclean mode so raw vs cleaned
+    # runs on the same subject don't overwrite each other)
     print("\n[3/5] Saving ICA objects...")
+    pkl_suffix = f"_{args.iclean}" if args.iclean != "none" else ""
     for method, ica in ica_dict.items():
-        path = RESULTS_DIR / f"ica_{method}.pkl"
+        path = RESULTS_DIR / f"ica_{method}{pkl_suffix}.pkl"
         with open(path, "wb") as f:
             pickle.dump(ica, f)
         print(f"  Saved {path.name}")
     if amica_result is not None:
-        with open(RESULTS_DIR / "amica_result.pkl", "wb") as f:
+        amica_path = RESULTS_DIR / f"amica_result{pkl_suffix}.pkl"
+        with open(amica_path, "wb") as f:
             pickle.dump(amica_result, f)
-        print("  Saved amica_result.pkl")
+        print(f"  Saved {amica_path.name}")
 
     # 4. Compute all metrics
     print("\n[4/5] Computing metrics...")
     results, labels_dict = compute_all_metrics(ica_dict, raw, times)
+    results["_iclean"] = iclean_meta
+    results["_config"] = {
+        "subject": args.subject, "hp": args.hp, "iclean": args.iclean,
+    }
 
-    # Save JSON
-    with open(RESULTS_DIR / "quick_check_results.json", "w") as f:
+    # Save JSON (suffix filename with iclean mode so raw vs cleaned
+    # quick checks don't clobber each other)
+    suffix = f"_{args.iclean}" if args.iclean != "none" else ""
+    json_path = RESULTS_DIR / f"quick_check_results{suffix}.json"
+    with open(json_path, "w") as f:
         json.dump(results, f, indent=2, default=str)
-    print("  Saved quick_check_results.json")
+    print(f"  Saved {json_path.name}")
 
     # 5. Generate ALL figures
     print("\n[5/5] Generating figures...")

@@ -21,6 +21,7 @@ References
 - Frank et al. (2025). Data requirements for AMICA. arXiv.
 - Klug et al. (2024). Optimizing EEG ICA. Scientific Reports.
 """
+import argparse
 import json
 import logging
 import os
@@ -30,24 +31,31 @@ from pathlib import Path
 import numpy as np
 import mne
 
+from validation.preprocessing_studnicki import clean_studnicki
+
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 # ── Paths ──
 # Update DS_PATH to your local ds004505 location
 DS_PATH = Path(os.environ.get("DS_PATH", "/home/sesma/scratch/ds004505"))
-RESULTS_DIR = Path(__file__).parent / "results"
-RESULTS_DIR.mkdir(exist_ok=True)
+_RESULTS_ROOT = Path(__file__).parent / "results"
+RESULTS_SUBDIR = os.environ.get("RESULTS_SUBDIR", "")
+RESULTS_DIR = _RESULTS_ROOT / RESULTS_SUBDIR if RESULTS_SUBDIR else _RESULTS_ROOT
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Parameters ──
 SUBJECTS = os.environ.get("SUBJECTS", "sub-01").split(",")
 SFREQ_TARGET = 250  # Hz — matches Frank 2025, halves compute vs 500 Hz
 MIN_KAPPA = 30  # Frank 2025 recommendation
 MAX_DURATION_SEC = None  # Use all available data (kappa-driven)
-METHODS = ["amica", "picard", "infomax", "fastica"]
+METHODS = [m.strip() for m in os.environ.get(
+    "METHODS", "amica,picard,infomax,fastica"
+).split(",") if m.strip()]
 MAX_ITER = int(os.environ.get("MAX_ITER", "500"))
 AMICA_NUM_MIX = 3  # Frank 2023 recommendation
 HP_FILTERS = [float(x) for x in os.environ.get("HP_FILTERS", "1.0,2.0").split(",")]
+ICLEAN_MODE = os.environ.get("ICLEAN", "none")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -129,7 +137,7 @@ def classify_channels(raw, set_path=None):
 # Preprocessing — following Paper9 notebook and Frank 2025
 # ═══════════════════════════════════════════════════════════════════════
 
-def load_and_preprocess(subject, hp_freq=1.0):
+def load_and_preprocess(subject, hp_freq=1.0, iclean_mode="none"):
     """Load ds004505, classify channels, preprocess for ICA.
 
     Parameters
@@ -139,8 +147,22 @@ def load_and_preprocess(subject, hp_freq=1.0):
     hp_freq : float
         High-pass filter cutoff in Hz. Merged files already have 1 Hz HP,
         so hp_freq >= 1.0 is required. Use 2.0 for Klug 2024 mobile sweep.
+    iclean_mode : {"none", "dual", "pseudo", "combo"}
+        Studnicki-style iCanClean cleaning mode. ``"none"`` is the
+        backward-compatible passthrough. ``"dual"`` and ``"combo"``
+        require the dual-layer noise channels to be present in the
+        recording; if they are missing the function falls back to
+        ``"none"`` with a warning.
 
-    Returns raw (scalp EEG only, ready for ICA) and channel groups dict.
+    Returns
+    -------
+    raw : mne.io.Raw
+        Preprocessed scalp EEG, ready for ICA (noise channels dropped).
+    ch_groups : dict
+        Channel classification from classify_channels().
+    iclean_meta : dict
+        Bookkeeping dict returned by clean_studnicki (or ``{"mode":
+        "none"}`` when cleaning is disabled).
     """
     set_file = DS_PATH / "sourcedata" / "Merged" / subject / f"{subject}_Merged.set"
     if not set_file.exists():
@@ -161,31 +183,89 @@ def load_and_preprocess(subject, hp_freq=1.0):
         if names:
             logger.info("  %s: %d channels", grp, len(names))
 
-    # Pick only scalp EEG
-    scalp_ch = ch_groups["eeg"]
+    scalp_ch = list(ch_groups["eeg"])
+    noise_ch = list(ch_groups.get("noise", []))
     if not scalp_ch:
         raise RuntimeError("No scalp EEG channels found")
-    raw.pick(scalp_ch)
-    raw.set_channel_types({ch: "eeg" for ch in raw.ch_names})
 
-    # Set montage — drop channels not in standard_1005
+    # If cleaning needs the noise reference but it's missing, warn and fall back.
+    effective_mode = iclean_mode
+    if iclean_mode in ("dual", "combo") and not noise_ch:
+        logger.warning(
+            "iclean_mode=%s requested but no dual-layer noise channels "
+            "present; falling back to 'none'.",
+            iclean_mode,
+        )
+        effective_mode = "none"
+
+    # Keep scalp + noise through the filter/resample stages so that
+    # cleaning sees them at the same sample rate and pass band. Mark
+    # noise as 'misc' so set_montage / set_eeg_reference ignore them.
+    raw.pick(scalp_ch + noise_ch)
+    raw.set_channel_types(
+        {**{ch: "eeg" for ch in scalp_ch if ch in raw.ch_names},
+         **{ch: "misc" for ch in noise_ch if ch in raw.ch_names}}
+    )
+
+    # Set montage — drop scalp channels not in standard_1005. Noise
+    # channels (misc) are left alone; set_montage ignores them with
+    # on_missing='ignore'.
     montage = mne.channels.make_standard_montage("standard_1005")
     montage_names = set(montage.ch_names)
-    missing = [ch for ch in raw.ch_names if ch not in montage_names]
+    eeg_ch_now = [ch for ch in raw.ch_names
+                  if raw.get_channel_types(picks=[ch])[0] == "eeg"]
+    missing = [ch for ch in eeg_ch_now if ch not in montage_names]
     if missing:
-        logger.info("  Dropping %d channels not in montage: %s", len(missing), missing)
+        logger.info("  Dropping %d scalp channels not in montage: %s",
+                    len(missing), missing)
         raw.drop_channels(missing)
     raw.set_montage(montage, on_missing="ignore")
 
-    # Resample to target (Merged files are at 500 Hz)
+    # Resample to target (Merged files are at 500 Hz). Filters and
+    # resample apply to all data channels, so noise rides along.
     if raw.info["sfreq"] != SFREQ_TARGET:
         raw.resample(SFREQ_TARGET, verbose=False)
         logger.info("  Resampled to %d Hz", SFREQ_TARGET)
 
     # Merged files are already 1 Hz HP filtered (Studnicki 2024).
     # Apply hp_freq (>= 1 Hz) + 100 Hz LP — ICLabel requires 1-100 Hz bandpass.
-    raw.filter(hp_freq, 100.0, verbose=False)
+    raw.filter(hp_freq, 100.0, picks=["eeg", "misc"], verbose=False)
     logger.info("  Filtered: %.1f–100 Hz", hp_freq)
+
+    # Apply Studnicki-style iCanClean cleaning BEFORE average reference.
+    # Cleaning changes the scalp data in-place; averaging after cleaning
+    # avoids spreading artefacts through the reference.
+    if effective_mode != "none":
+        scalp_picks = mne.pick_types(raw.info, eeg=True)
+        noise_picks = mne.pick_types(raw.info, misc=True)
+        scalp_data = raw.get_data(picks=scalp_picks)
+        noise_data = (
+            raw.get_data(picks=noise_picks) if len(noise_picks) else None
+        )
+        cleaned, iclean_meta = clean_studnicki(
+            scalp_data, noise_data,
+            sfreq=raw.info["sfreq"], mode=effective_mode,
+        )
+        raw._data[scalp_picks] = cleaned
+        logger.info(
+            "  iclean[%s]: mean_rejected_fraction=%.3f",
+            effective_mode,
+            iclean_meta.get("mean_rejected_fraction",
+                            iclean_meta.get("stage2", {}).get(
+                                "mean_rejected_fraction", 0.0)),
+        )
+    else:
+        iclean_meta = {"mode": "none"}
+
+    # Drop noise channels now that cleaning is done; downstream code
+    # (average reference, ICA) should see scalp only.
+    noise_still_present = [
+        ch for ch in raw.ch_names
+        if raw.get_channel_types(picks=[ch])[0] == "misc"
+    ]
+    if noise_still_present:
+        raw.drop_channels(noise_still_present)
+
     raw.set_eeg_reference("average", verbose=False)
 
     # Determine how much data we need for kappa >= MIN_KAPPA
@@ -218,7 +298,7 @@ def load_and_preprocess(subject, hp_freq=1.0):
         kappa,
     )
 
-    return raw, ch_groups
+    return raw, ch_groups, iclean_meta
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -498,15 +578,36 @@ def _print_summary(results, methods):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--iclean",
+        choices=["none", "dual", "pseudo", "combo"],
+        default=ICLEAN_MODE,
+        help="Studnicki iCanClean cleaning mode (env ICLEAN, default 'none').",
+    )
+    parser.add_argument(
+        "--results-subdir",
+        default=RESULTS_SUBDIR,
+        help="Subdirectory under validation/results/ for this run's JSONs.",
+    )
+    args = parser.parse_args()
+
+    iclean_mode = args.iclean
+    results_dir = _RESULTS_ROOT / args.results_subdir if args.results_subdir else _RESULTS_ROOT
+    results_dir.mkdir(parents=True, exist_ok=True)
+
     logger.info("=" * 65)
     logger.info("HIGH-DENSITY EEG BENCHMARK (ds004505)")
     logger.info("  Subjects: %s", SUBJECTS)
     logger.info("  HP filters: %s Hz", HP_FILTERS)
     logger.info("  Methods: %s", METHODS)
     logger.info("  MAX_ITER: %d", MAX_ITER)
+    logger.info("  iclean: %s", iclean_mode)
+    logger.info("  results dir: %s", results_dir)
     logger.info("=" * 65)
 
     all_results = {}
+    suffix = f"_{iclean_mode}" if iclean_mode != "none" else ""
 
     for subject in SUBJECTS:
         logger.info("\n########## %s ##########", subject)
@@ -517,13 +618,15 @@ def main():
             logger.info("\n===== %s | HP = %.1f Hz =====", subject, hp_freq)
 
             try:
-                raw, ch_groups = load_and_preprocess(subject, hp_freq=hp_freq)
+                raw, ch_groups, iclean_meta = load_and_preprocess(
+                    subject, hp_freq=hp_freq, iclean_mode=iclean_mode,
+                )
             except FileNotFoundError as e:
                 logger.warning("Skipping %s: %s", subject, e)
                 break
 
             n_components = determine_n_components(raw)
-            sweep_results = {}
+            sweep_results = {"_iclean": iclean_meta}
 
             for method in METHODS:
                 logger.info("\n--- %s | %s | HP %.1f Hz ---", method.upper(), subject, hp_freq)
@@ -531,25 +634,29 @@ def main():
                     ica, dt = run_ica_method(raw, method, n_components, max_iter=MAX_ITER)
                     result = _run_metrics(ica, raw, method)
                     result["time"] = dt
+                    result["iclean"] = iclean_meta
                     sweep_results[method] = result
                 except Exception as e:
                     logger.error("    %s FAILED: %s", method, e)
                     import traceback; traceback.print_exc()
-                    sweep_results[method] = {"error": str(e)}
+                    sweep_results[method] = {"error": str(e), "iclean": iclean_meta}
 
             all_results[subject][sweep_key] = sweep_results
 
             # Print summary for this sweep
             _print_summary(sweep_results, METHODS)
 
-            # Save incrementally (in case job gets killed)
-            output_file = RESULTS_DIR / f"benchmark_{subject}_hp{hp_freq}hz.json"
+            # Save incrementally (in case job gets killed). Encode iclean
+            # mode into filename so raw vs cleaned runs never collide.
+            output_file = (
+                results_dir / f"benchmark_{subject}_hp{hp_freq}hz{suffix}.json"
+            )
             with open(output_file, "w") as f:
                 json.dump(sweep_results, f, indent=2, default=str)
             logger.info("Saved: %s", output_file)
 
     # Save combined results
-    combined_file = RESULTS_DIR / "benchmark_combined.json"
+    combined_file = results_dir / f"benchmark_combined{suffix}.json"
     with open(combined_file, "w") as f:
         json.dump(all_results, f, indent=2, default=str)
     logger.info("\nAll results saved to: %s", combined_file)
