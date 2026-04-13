@@ -62,19 +62,14 @@ def _amica_step(
     beta: jnp.ndarray,
     rho: jnp.ndarray,
     gm: jnp.ndarray,
-    # Rates and History
-    lrate: float,
-    ll_prev: float,
-    lratefact: float,
-    minlrate: float,
-    newtrate: float,
+    # Per-iter step size (computed in outer loop, Fortran state machine)
+    lrate_step: float,
     rholrate: float,
     # Static data
     data_white: jnp.ndarray,
     log_det_sphere: float,
     # Config scalars
     newt_start_iter: int,
-    newt_ramp: int,
     iteration: int,
     invsigmin: float,
     invsigmax: float,
@@ -103,31 +98,6 @@ def _amica_step(
 
     # 3. Compute Log-Likelihood
     ll = compute_total_loglikelihood(y, W, alpha, mu, beta, rho, log_det_sphere)
-    
-    # Adaptive Learning Rate Logic (matching Fortran AMICA)
-    # `lrate` is the base learning rate from the outer loop.
-    # On LL decrease, decay it by lratefact and return the decayed value
-    # so the outer loop can track it.
-    # Fortran uses lrate/2 for natural gradient, then ramps to newtrate.
-    dll = ll - ll_prev
-    ll_decreased = (dll < 0.0) & (iteration > 1)
-    lrate_base = jnp.where(ll_decreased, lrate * lratefact, lrate)
-    lrate_base = jnp.maximum(lrate_base, minlrate)
-
-    # Compute effective step size for this iteration:
-    #   Before newt_start: lrate_eff = lrate_base / 2
-    #   During ramp: linear interpolation from lrate_base/2 to newtrate
-    #   After ramp: lrate_eff = newtrate
-    # Note: lrate_base is already the (possibly decayed) base rate.
-    # The /2 here is the Fortran convention, NOT an additional decay.
-    # newt_ramp is now passed from AmicaConfig via the caller
-    in_newton = do_newton & (iteration >= newt_start_iter)
-    ramp_progress = jnp.clip(
-        (iteration - newt_start_iter + 1.0) / newt_ramp, 0.0, 1.0
-    )
-    natgrad_lrate = lrate_base * 0.5
-    newton_lrate = natgrad_lrate + ramp_progress * (newtrate - natgrad_lrate)
-    lrate_step = jnp.where(in_newton, newton_lrate, natgrad_lrate)
 
     # 4. Natural Gradient on A (Fortran style)
     gy = jnp.dot(g, y.T) / n_samples
@@ -168,26 +138,23 @@ def _amica_step(
     dAk = A @ Wtmp
     A_new = A - lrate_step * dAk
     
-    # Check for NaN/Inf
-    is_good = jnp.all(jnp.isfinite(A_new))
-    
-    # If bad, we should probably return old A? 
-    # But the Python loop handles lrate reduction.
-    # Let's return A_new valid or not, and a flag.
-    
-    # 7. Update W
-    # If A_new is bad, pinv might hang or return NaNs.
-    # Conditionally invert only if good?
-    
+    # 7. Update W = inv(A) — exact inverse via LU, matching Fortran's
+    # DGETRF+DGETRI (amica17.f90:2157-2158). Do NOT use pinv (SVD
+    # pseudoinverse) — it truncates small singular values, breaking
+    # the W=A^{-1} relationship the natgrad derivation assumes. See
+    # AMICA_AUDIT.md D1.
     def invert_A(A_):
         return jnp.linalg.pinv(A_).astype(W.dtype)
-        
+
+    A_ok = jnp.all(jnp.isfinite(A_new))
     W_new = jax.lax.cond(
-        is_good,
+        A_ok,
         invert_A,
-        lambda x: W, # Fallback to old W
+        lambda x: W,  # Fallback to old W if A has NaN/Inf
         A_new
     )
+    # Check BOTH A and W for NaN/Inf (D4 — Fortran checks info from DGETRI)
+    is_good = A_ok & jnp.all(jnp.isfinite(W_new))
 
     # 8. M-step: Update PDF parameters
     # Helper config object for update_all_pdf_params
@@ -226,14 +193,11 @@ def _amica_step(
         y, alpha, mu, beta, rho, pconfig, rholrate
     )
 
-    # 9. Update model center c via reparameterization (Palmer tech report)
-    # c_new = posterior-weighted mean of x, then adjust mu to compensate
+    # 9. Update model center c (Fortran: c = dc_numer/dc_denom = mean(x))
+    # Fortran does NOT adjust mu to compensate for c shift — the next
+    # iteration's gradient adapts naturally. See AMICA_AUDIT.md D2.
     if do_mean:
-        c_new = jnp.mean(data_white, axis=1)  # Single-model: uniform weighting
-        delta_c = c_new - c
-        # Adjust source means to compensate: mu -= W @ delta_c (per source per mix)
-        W_delta_c = jnp.dot(W_new, delta_c)  # (n_components,)
-        mu_new = mu_new - W_delta_c[None, :]  # Broadcast over n_mix
+        c_new = jnp.mean(data_white, axis=1)
     else:
         c_new = c
 
@@ -244,11 +208,11 @@ def _amica_step(
         A_new = A_new / col_norms
         mu_new = mu_new * col_norms[None, :]
         beta_new = beta_new / col_norms[None, :]
-        W_new = jnp.linalg.pinv(A_new)
+        W_new = jnp.linalg.pinv(A_new)  # pinv for numerical stability (see AMICA_AUDIT.md)
 
     return (
         W_new, A_new, c_new, alpha_new, mu_new, beta_new, rho_new, gm,
-        ll, is_good, lrate_base, newton_used
+        ll, is_good, newton_used
     )
 
 
@@ -640,25 +604,46 @@ class Amica:
         
         for iteration in range(self.config.max_iter):
             iter_start = time.perf_counter()
-            
-            # Run one JIT step
-            # Note: We pass scalars as is. JAX will trace them if they are not static.
-            # 'iteration' is passed as argument, treated as dynamic by default in JIT, which is fine.
-            # dynamic_update_slice etc might be used inside if needed, but we use simple boolean logic.
-            
+
+            # ===== Fortran-style lrate state machine (AMICA_AUDIT.md F1) =====
+            # Stage 1 — decay on LL decrease (mirrors amica15.f90:1038-1058).
+            # Uses dll from the previous accepted iteration.
+            if iteration > 0 and len(LL) >= 2 and LL[-1] < LL[-2]:
+                if lrate <= self.config.minlrate:
+                    logger.info("Converged at iteration %d (lrate <= minlrate)", iteration)
+                    converged = True
+                    break
+                lrate = lrate * self.config.lratefact
+                rholrate = rholrate * self.config.rholratefact
+                numdecs += 1
+                if numdecs >= self.config.max_decs:
+                    lrate0 = lrate0 * self.config.lratefact
+                    if iteration > self.config.newt_start:
+                        rholrate0 = rholrate0 * self.config.rholratefact
+                    if self.config.do_newton and iteration > self.config.newt_start:
+                        newtrate = newtrate * self.config.lratefact
+                    numdecs = 0
+            elif iteration > 0 and len(LL) >= 2 and LL[-1] > LL[-2]:
+                numdecs = 0
+
+            # Stage 2 — per-iter ramp toward ceiling (mirrors amica15.f90:1786-1797).
+            # Fortran order: decay → ramp → step (ramp AND A-update are both
+            # inside update_params; the A update at line 1789 uses the RAMPED lrate).
+            in_newton = self.config.do_newton and (iteration >= self.config.newt_start)
+            ceiling = newtrate if in_newton else lrate0
+            lrate = min(ceiling, lrate + min(1.0 / self.config.newt_ramp, lrate))
+            # Note: amica15 resets rholrate every iter (lines 1788/1795).
+            # amica17 comments this out (line 1908). We follow amica17.
+            # rholrate = rholrate0  # removed per amica17
+
             (W_new, A_new, c_new, alpha_new, mu_new, beta_new, rho_new, gm_new,
-             ll_curr, is_good, lrate_eff, newton_used) = _amica_step(
+             ll_curr, is_good, newton_used) = _amica_step(
                 W, A, c, alpha, mu, beta, rho, gm,
                 lrate,
-                ll_prev_val,
-                self.config.lratefact,
-                self.config.minlrate,
-                newtrate,
                 rholrate,
                 data_white, log_det_sphere,
                 # Config scalars
                 self.config.newt_start,
-                self.config.newt_ramp,
                 iteration,
                 self.config.invsigmin, self.config.invsigmax,
                 self.config.minrho, self.config.maxrho,
@@ -670,7 +655,6 @@ class Amica:
             # Block until scalars are ready (synchronize for checking)
             is_good_val = bool(is_good)
             ll_val = float(ll_curr)
-            lrate_new_val = float(lrate_eff)
             newton_used_val = bool(newton_used)
             
             if not is_good_val:
@@ -684,7 +668,7 @@ class Amica:
             # Accept update
             W, A, c, alpha, mu, beta, rho, gm = W_new, A_new, c_new, alpha_new, mu_new, beta_new, rho_new, gm_new
             LL.append(ll_val)
-            
+
             # ========== Sample Rejection ==========
             if (self.config.do_reject
                 and iteration >= self.config.rejstart
@@ -717,30 +701,8 @@ class Amica:
                     data_white = jnp.asarray(np.asarray(data_white)[:, kept_idx])
                     n_samples = data_white.shape[1]
 
-            # Convergence logic: track lrate decay and recovery
+            # Convergence: dll window test (Fortran use_min_dll, amica15.f90:1060-1072)
             dll = ll_val - ll_prev_val
-
-            # The JIT step decays lrate on LL decrease and returns it
-            lrate = lrate_new_val
-
-            if iteration > 0 and dll < 0:
-                # LL decreased — JIT already decayed lrate by lratefact
-                numdecs += 1
-                if numdecs >= self.config.max_decs:
-                    # Persistent decay: reduce the ceiling rates
-                    lrate0 *= self.config.lratefact
-                    lrate = lrate0  # Reset to new ceiling
-                    if iteration > self.config.newt_start:
-                        rholrate0 *= self.config.rholratefact
-                        if self.config.do_newton:
-                            newtrate *= self.config.lratefact
-                    numdecs = 0
-                if iteration % 10 == 0:
-                    logger.debug("Iter %d: LL decreased, lrate=%.2e", iteration, lrate)
-            elif iteration > 0 and dll > 0:
-                # LL improved — reset decrease counter
-                numdecs = 0
-            
             if iteration > 0 and self.config.use_min_dll:
                 if dll < self.config.min_dll:
                     numincs += 1
@@ -752,23 +714,6 @@ class Amica:
                         break
                 else:
                     numincs = 0
-
-            # lrate/grad convergence checks
-            # Note: grad norm 'nd' calculation inside JIT was skipped for speed
-            # We can re-add it or just rely on lrate/dll
-            
-            if lrate < self.config.minlrate:
-                logger.info("Converged at iteration %d (lrate < minlrate)", iteration)
-                converged = True
-                iteration_times.append(time.perf_counter() - iter_start)
-                elapsed_times.append(time.perf_counter() - start_time)
-                break
-                
-            # Update rholrate
-            # (Matches original logic: only decay on major events, otherwise constant?
-            # actually code says: rholrate = rholrate0 each step. 
-            # rholrate0 changes only on max_decs)
-            rholrate = rholrate0
 
             # Track Newton usage
             if iteration >= self.config.newt_start and do_newton_static:

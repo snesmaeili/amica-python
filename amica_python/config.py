@@ -117,7 +117,7 @@ class AmicaConfig:
     max_iter: int = 2000
     
     # Learning rates
-    lrate: float = 0.1
+    lrate: float = 0.01  # 0.1 crashes on 60+ component real EEG (both Fortran and Python)
     minlrate: float = 1e-8
     lratefact: float = 0.5
     rholrate: float = 0.05
@@ -154,12 +154,12 @@ class AmicaConfig:
     min_grad_norm: float = 1e-6
     use_grad_norm: bool = False
     use_min_dll: bool = True
-    max_decs: int = 5
+    max_decs: int = 3  # Match Fortran amicadefs.param (was 5; see AMICA_AUDIT.md F1/F4)
     max_incs: int = 10
     
     # Numerical stability
     invsigmax: float = 100.0
-    invsigmin: float = 0.0
+    invsigmin: float = 1e-8  # Match Fortran amicadefs.param (was 0.0; see AMICA_AUDIT.md F2)
 
     # Rescaling
     doscaling: bool = True

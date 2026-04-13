@@ -166,7 +166,10 @@ def compute_responsibilities(
     # Responsibilities in log space, then exponentiate
     log_responsibilities = log_weighted_pdfs - log_total
     
-    return jnp.exp(log_responsibilities)
+    # Fortran adds +1e-15 floor then re-normalizes (amica17.f90:1353-1358)
+    # to prevent exactly-zero responsibilities from causing 0/0 downstream.
+    resp = jnp.exp(log_responsibilities) + 1e-15
+    return resp / jnp.sum(resp, axis=0, keepdims=True)
 
 
 @jax.jit
