@@ -182,6 +182,13 @@ class AmicaConfig:
     
     # Block processing
     block_size: int = 128
+
+    # Time-axis chunking for the E-step accumulator. None = full-batch
+    # (default, preserves current behavior). Set to e.g. 1024 on CPU to
+    # reduce peak RAM from O(T*M*n*J) to O(chunk_t*M*n*J). The per-iteration
+    # objective is unchanged (algebraic identity, not mini-batch SGD) — one
+    # M-step per iteration on the accumulated sufficient statistics.
+    chunk_size: Optional[int] = None
     
     def __post_init__(self):
         """Validate configuration."""
@@ -201,5 +208,7 @@ class AmicaConfig:
             raise ValueError("max_decs must be >= 0")
         if self.max_incs < 0:
             raise ValueError("max_incs must be >= 0")
+        if self.chunk_size is not None and self.chunk_size < 1:
+            raise ValueError("chunk_size must be >= 1 or None")
         if self.outdir is not None:
             self.outdir = Path(self.outdir)

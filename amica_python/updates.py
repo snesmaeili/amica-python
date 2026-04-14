@@ -741,3 +741,130 @@ def update_model_centers(
     c_new = jnp.where(denom > 1e-10, numer / denom, c_current)
     
     return c_new
+
+
+# -----------------------------------------------------------------------
+# From-stats M-step helpers (for chunked E-step path)
+# -----------------------------------------------------------------------
+# These accept pre-accumulated sufficient statistics from accumulators.py
+# and perform the same M-step as the full-batch functions above, but
+# without needing the full (T, ...) tensors in memory.
+#
+# The accumulators are sums (not means). Division by n_total happens
+# inside these helpers where appropriate.
+# -----------------------------------------------------------------------
+
+
+@jax.jit
+def apply_alpha_update_from_stats(resp_sum: jnp.ndarray, n_total: float) -> jnp.ndarray:
+    """Alpha update from pre-accumulated responsibility sum.
+
+    alpha = sum(resp) / n_total, then clipped and normalized per component.
+    Same as update_alpha but with `resp_sum = sum(resp, axis=time)` pre-computed.
+    """
+    alpha = resp_sum / n_total                         # (n_mix, n_comp)
+    alpha = jnp.maximum(alpha, 1e-10)
+    alpha = alpha / jnp.sum(alpha, axis=0, keepdims=True)
+    return alpha
+
+
+@jax.jit
+def apply_mu_update_from_stats(
+    mu_current: jnp.ndarray,        # (n_mix, n_comp)
+    mu_numer: jnp.ndarray,          # sum(u*fp), shape (n_mix, n_comp)
+    mu_denom_le2: jnp.ndarray,      # b*sum(u*fp/y_scaled), shape (n_mix, n_comp)
+    mu_denom_gt2: jnp.ndarray,      # b*sum(u*fp*fp), shape (n_mix, n_comp)
+    rho: jnp.ndarray,               # (n_mix, n_comp)
+) -> jnp.ndarray:
+    """mu update from pre-accumulated (u*fp) statistics.
+
+    mu_new = mu + numer/denom where denom is selected by rho <= 2.0
+    (same branching as update_mu lines 196-200).
+    """
+    denom = jnp.where(rho <= 2.0, mu_denom_le2, mu_denom_gt2)
+    safe_denom = jnp.where(jnp.abs(denom) > 1e-12, denom, 1e-12)
+    return mu_current + mu_numer / safe_denom
+
+
+@jax.jit
+def apply_beta_update_from_stats(
+    beta_current: jnp.ndarray,      # (n_mix, n_comp)
+    beta_numer: jnp.ndarray,        # sum(u), shape (n_mix, n_comp)
+    beta_denom_le2: jnp.ndarray,    # sum(u*fp*y_scaled), shape (n_mix, n_comp)
+    beta_denom_gt2: jnp.ndarray,    # sum(u*|y_scaled|^rho), shape (n_mix, n_comp)
+    rho: jnp.ndarray,               # (n_mix, n_comp)
+    invsigmin: float,
+    invsigmax: float,
+) -> jnp.ndarray:
+    """beta update from pre-accumulated statistics.
+
+    beta_new = beta * sqrt(numer / denom) with branching by rho <= 2.0,
+    then clipped. Same as update_beta lines 278-295.
+    """
+    denom = jnp.where(rho <= 2.0, beta_denom_le2, beta_denom_gt2)
+    safe_denom = jnp.where(jnp.abs(denom) > 1e-12, denom, 1e-12)
+    ratio = beta_numer / safe_denom
+    safe_ratio = jnp.maximum(ratio, 1e-12)
+    beta_new = beta_current * jnp.sqrt(safe_ratio)
+    return jnp.clip(beta_new, invsigmin, invsigmax)
+
+
+@jax.jit
+def apply_rho_update_from_stats(
+    rho_current: jnp.ndarray,       # (n_mix, n_comp)
+    rho_numer: jnp.ndarray,         # sum(u*|y|^rho*rho*log|y|), shape (n_mix, n_comp)
+    rho_denom: jnp.ndarray,         # sum(u), shape (n_mix, n_comp)
+    rholrate: float,
+    minrho: float,
+    maxrho: float,
+) -> jnp.ndarray:
+    """rho update from pre-accumulated statistics.
+
+    rho_new = rho + rholrate * (1 - (rho/psi(1+1/rho)) * numer/denom)
+    then clipped. Same as update_rho_gradient lines 372-390.
+    """
+    psi = digamma(1.0 + 1.0 / rho_current)
+    safe_denom = jnp.maximum(rho_denom, 1e-12)
+    ratio = rho_numer / safe_denom
+    safe_psi = jnp.maximum(jnp.abs(psi), 1e-12) * jnp.sign(psi + 1e-12)
+    gradient_term = 1.0 - (rho_current / safe_psi) * ratio
+    rho_new = rho_current + rholrate * gradient_term
+    return jnp.clip(rho_new, minrho, maxrho)
+
+
+@jax.jit
+def compute_newton_terms_from_stats(
+    sigma2_partial: jnp.ndarray,    # (n_comp,) = sum(y*y)
+    resp_sum: jnp.ndarray,          # (n_mix, n_comp) = sum(u)
+    kappa_numer: jnp.ndarray,       # (n_mix, n_comp) = sum(u*fp*fp)
+    lambda_numer: jnp.ndarray,      # (n_mix, n_comp) = sum(u*(fp*y-1)^2)
+    mu: jnp.ndarray,                # (n_mix, n_comp)
+    beta: jnp.ndarray,              # (n_mix, n_comp)
+    n_total: float,
+):
+    """Compute Newton (sigma2, kappa, lambda) from accumulated stats.
+
+    Matches compute_newton_terms (updates.py:20-106) line-for-line:
+      sigma2 = mean(y*y)
+      dkap_j = beta_j^2 * sum(u*fp*fp) / sum(u)
+      dlambda_j = sum(u*(fp*y-1)^2) / sum(u)
+      baralpha_j = mean(resp_j) = sum(u) / n_total
+      kappa = sum_j(baralpha * dkap)
+      lambda = sum_j(baralpha * (dlambda + dkap * mu^2))
+    """
+    # sigma2 = mean(y*y)
+    sigma2 = sigma2_partial / n_total             # (n_comp,)
+
+    # Per-mixture: dkap_j = sbeta_j^2 * sum(u*fp*fp) / sum(u)
+    safe_u = jnp.maximum(resp_sum, 1e-12)         # (n_mix, n_comp)
+    dkap = (beta ** 2) * kappa_numer / safe_u     # (n_mix, n_comp)
+    dlambda = lambda_numer / safe_u               # (n_mix, n_comp)
+
+    # baralpha = mean(u) = sum(u) / n_total
+    baralpha = resp_sum / n_total                 # (n_mix, n_comp)
+
+    # kappa = sum_j(baralpha * dkap), per component
+    kappa = jnp.sum(baralpha * dkap, axis=0)                          # (n_comp,)
+    lambda_ = jnp.sum(baralpha * (dlambda + dkap * mu ** 2), axis=0)  # (n_comp,)
+
+    return sigma2, kappa, lambda_

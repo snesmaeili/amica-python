@@ -216,6 +216,133 @@ def _amica_step(
     )
 
 
+def _amica_step_chunked(
+    W, A, c, alpha, mu, beta, rho, gm,
+    lrate_step, rholrate,
+    data_white, log_det_sphere,
+    newt_start_iter, iteration,
+    invsigmin, invsigmax, minrho, maxrho,
+    do_newton, do_mean, do_sphere, doscaling,
+    update_alpha, update_mu, update_beta, update_rho,
+    chunk_size: int,
+):
+    """Chunked-accumulator version of _amica_step for CPU memory scalability.
+
+    Loops over the time axis in chunks of `chunk_size`, accumulates
+    sufficient statistics only, then performs a single M-step on the
+    totals. Mathematically equivalent to _amica_step up to float64
+    rounding (O(eps*T) ≈ 1e-10).
+
+    Not JIT-compiled at the outer level (Python for-loop), but the
+    per-chunk `compute_chunk_stats` IS JIT-compiled.
+    """
+    from .accumulators import compute_chunk_stats, zero_stats, add_stats
+    from .updates import (
+        apply_alpha_update_from_stats, apply_mu_update_from_stats,
+        apply_beta_update_from_stats, apply_rho_update_from_stats,
+        compute_newton_terms_from_stats, apply_full_newton_correction,
+    )
+
+    n_samples = data_white.shape[1]
+    n_components = W.shape[0]
+    n_mix = alpha.shape[0]
+    dtype = W.dtype
+
+    # --- E-step: accumulate sufficient statistics over chunks ---
+    totals = zero_stats(n_components, n_mix, dtype=dtype)
+    data_sum_total = jnp.zeros((n_components,), dtype=dtype)
+
+    for start in range(0, n_samples, chunk_size):
+        stop = min(start + chunk_size, n_samples)
+        data_chunk = data_white[:, start:stop] - c[:, None]  # pre-center
+        stats = compute_chunk_stats(
+            data_chunk, W, alpha, mu, beta, rho, log_det_sphere
+        )
+        totals = add_stats(totals, stats)
+        # Track uncentered data sum separately for c update
+        data_sum_total = data_sum_total + jnp.sum(data_white[:, start:stop], axis=1)
+
+    n_total = float(n_samples)
+    ll = totals.ll_sum / n_total / n_components  # match compute_average_loglikelihood
+
+    # --- Natural gradient ---
+    gy = totals.gy_partial / n_total
+    dA_local = jnp.eye(n_components, dtype=dtype) - gy
+
+    # --- Newton correction ---
+    newton_used = jnp.array(False)
+    Wtmp = dA_local
+    if do_newton and iteration >= newt_start_iter:
+        sigma2, kappa, lambda_ = compute_newton_terms_from_stats(
+            totals.sigma2_partial, totals.resp_sum,
+            totals.kappa_numer, totals.lambda_numer,
+            mu, beta, n_total,
+        )
+        lambda_pos = jnp.all(lambda_ > 0)
+        Wtmp_newt, posdef_newt = apply_full_newton_correction(
+            dA_local, sigma2, kappa, lambda_
+        )
+        is_valid = lambda_pos & posdef_newt
+        Wtmp = jnp.where(is_valid, Wtmp_newt, dA_local)
+        newton_used = is_valid
+
+    # --- A/W update (same as _amica_step) ---
+    dAk = A @ Wtmp
+    A_new = A - lrate_step * dAk
+    A_ok = jnp.all(jnp.isfinite(A_new))
+    W_new = jnp.where(
+        A_ok, jnp.linalg.pinv(A_new).astype(dtype), W
+    )
+    is_good = A_ok & jnp.all(jnp.isfinite(W_new))
+
+    # --- M-step on PDF params using accumulated stats ---
+    if update_alpha:
+        alpha_new = apply_alpha_update_from_stats(totals.resp_sum, n_total)
+    else:
+        alpha_new = alpha
+
+    if update_mu:
+        mu_new = apply_mu_update_from_stats(
+            mu, totals.mu_numer, totals.mu_denom_le2, totals.mu_denom_gt2, rho,
+        )
+    else:
+        mu_new = mu
+
+    if update_beta:
+        beta_new = apply_beta_update_from_stats(
+            beta, totals.resp_sum, totals.beta_denom_le2, totals.beta_denom_gt2,
+            rho, invsigmin, invsigmax,
+        )
+    else:
+        beta_new = beta
+
+    if update_rho:
+        rho_new = apply_rho_update_from_stats(
+            rho, totals.rho_numer, totals.resp_sum, rholrate, minrho, maxrho,
+        )
+    else:
+        rho_new = rho
+
+    # --- c update (Fortran: c = mean(data_white)) ---
+    if do_mean:
+        c_new = data_sum_total / n_total
+    else:
+        c_new = c
+
+    # --- Column scaling ---
+    if doscaling:
+        col_norms = jnp.linalg.norm(A_new, axis=0)
+        col_norms = jnp.where(col_norms > 0.0, col_norms, 1.0)
+        A_new = A_new / col_norms
+        mu_new = mu_new * col_norms[None, :]
+        beta_new = beta_new / col_norms[None, :]
+        W_new = jnp.linalg.pinv(A_new)
+
+    return (
+        W_new, A_new, c_new, alpha_new, mu_new, beta_new, rho_new, gm,
+        ll, is_good, newton_used,
+    )
+
 
 @dataclass
 class AmicaResult:
@@ -636,8 +763,15 @@ class Amica:
             # amica17 comments this out (line 1908). We follow amica17.
             # rholrate = rholrate0  # removed per amica17
 
+            # Dispatch: full-batch (default) or chunked E-step
+            _step_fn = (
+                _amica_step if self.config.chunk_size is None else
+                (lambda *args, **kw: _amica_step_chunked(
+                    *args, chunk_size=self.config.chunk_size, **kw
+                ))
+            )
             (W_new, A_new, c_new, alpha_new, mu_new, beta_new, rho_new, gm_new,
-             ll_curr, is_good, newton_used) = _amica_step(
+             ll_curr, is_good, newton_used) = _step_fn(
                 W, A, c, alpha, mu, beta, rho, gm,
                 lrate,
                 rholrate,

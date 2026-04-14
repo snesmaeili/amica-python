@@ -444,5 +444,77 @@ class TestMNEIntegrationGuards(unittest.TestCase):
         self.assertEqual(raw_clean.get_data().shape, data.shape)
 
 
+class TestChunkedAccumulator(unittest.TestCase):
+    """Chunked E-step should match full-batch within float64 rounding."""
+
+    def test_chunked_loglik_additivity(self):
+        """sum(compute_loglik_chunk) across halves == compute_total_loglikelihood."""
+        import jax.numpy as jnp
+        from amica_python.likelihood import (
+            compute_total_loglikelihood, compute_loglik_chunk,
+        )
+        rng = np.random.RandomState(0)
+        n_comp, n_mix, n_samp = 4, 3, 10000
+        y = rng.randn(n_comp, n_samp)
+        W = np.eye(n_comp) + 0.01 * rng.randn(n_comp, n_comp)
+        alpha = np.ones((n_mix, n_comp)) / n_mix
+        mu = rng.randn(n_mix, n_comp) * 0.1
+        beta = np.ones((n_mix, n_comp)) + 0.05 * rng.randn(n_mix, n_comp)
+        rho = np.full((n_mix, n_comp), 1.5)
+
+        ll_full = float(compute_total_loglikelihood(
+            jnp.asarray(y), jnp.asarray(W), jnp.asarray(alpha),
+            jnp.asarray(mu), jnp.asarray(beta), jnp.asarray(rho),
+            log_det_sphere=0.3,
+        ))
+        ll_h1, n1 = compute_loglik_chunk(
+            jnp.asarray(y[:, :5000]), jnp.asarray(W), jnp.asarray(alpha),
+            jnp.asarray(mu), jnp.asarray(beta), jnp.asarray(rho),
+            log_det_sphere=0.3,
+        )
+        ll_h2, n2 = compute_loglik_chunk(
+            jnp.asarray(y[:, 5000:]), jnp.asarray(W), jnp.asarray(alpha),
+            jnp.asarray(mu), jnp.asarray(beta), jnp.asarray(rho),
+            log_det_sphere=0.3,
+        )
+        ll_merged = float((ll_h1 + ll_h2) / (n1 + n2) / n_comp)
+        self.assertLess(abs(ll_full - ll_merged) / max(abs(ll_full), 1e-20), 1e-12)
+
+    def test_chunked_matches_fullbatch_synthetic(self):
+        """Chunked vs full-batch: W and LL agree within rounding after 50 iters."""
+        from amica_python import Amica, AmicaConfig
+
+        rng = np.random.RandomState(42)
+        n_src, n_samp = 4, 5000
+        srcs = np.stack([
+            rng.laplace(size=n_samp),
+            rng.standard_t(df=3, size=n_samp),
+            rng.laplace(size=n_samp) * 1.5,
+            np.sign(rng.randn(n_samp)) * rng.exponential(size=n_samp),
+        ])[:n_src]
+        srcs = srcs / srcs.std(axis=1, keepdims=True)
+        A_true = rng.randn(n_src, n_src)
+        A_true = A_true / np.linalg.norm(A_true, axis=0, keepdims=True)
+        x = A_true @ srcs
+
+        cfg_kw = dict(num_models=1, num_mix_comps=3, max_iter=50,
+                      dtype="float64", pcakeep=n_src)
+        res_full = Amica(AmicaConfig(**cfg_kw, chunk_size=None),
+                         random_state=42).fit(x)
+        res_chunk = Amica(AmicaConfig(**cfg_kw, chunk_size=1024),
+                          random_state=42).fit(x)
+
+        W_full = np.asarray(res_full.unmixing_matrix_white_)
+        W_chunk = np.asarray(res_chunk.unmixing_matrix_white_)
+        rel_err = np.max(np.abs(W_chunk - W_full)) / np.max(np.abs(W_full))
+        self.assertLess(rel_err, 1e-4,
+            f"Chunked W diverged from full-batch: rel_err={rel_err:.2e}")
+
+        ll_full = float(np.asarray(res_full.log_likelihood)[-1])
+        ll_chunk = float(np.asarray(res_chunk.log_likelihood)[-1])
+        self.assertLess(abs(ll_full - ll_chunk), 1e-5,
+            f"Final LL diverged: full={ll_full:.8f} chunk={ll_chunk:.8f}")
+
+
 if __name__ == "__main__":
     unittest.main()

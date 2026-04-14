@@ -148,6 +148,34 @@ def compute_total_loglikelihood(
     return compute_average_loglikelihood(sample_lls, n_components)
 
 
+def compute_loglik_chunk(
+    y_chunk: jnp.ndarray,
+    W: jnp.ndarray,
+    alpha: jnp.ndarray,
+    mu: jnp.ndarray,
+    beta: jnp.ndarray,
+    rho: jnp.ndarray,
+    log_det_sphere: float = 0.0,
+):
+    """Compute (sum of per-sample LL, n_chunk) for one time-chunk.
+
+    Companion to compute_total_loglikelihood for chunked accumulation.
+    Returns UNNORMALIZED sum so the caller can average across chunks:
+
+        total_ll_avg = (sum_ll_a + sum_ll_b) / (n_a + n_b) / n_components
+
+    Parameters
+    ----------
+    y_chunk : jnp.ndarray, shape (n_components, n_chunk)
+    W, alpha, mu, beta, rho : same as compute_total_loglikelihood
+    log_det_sphere : scalar added to every per-sample LL
+    """
+    log_det_W = compute_log_det_W(W)
+    source_ll = compute_source_loglikelihood(y_chunk, alpha, mu, beta, rho)
+    sample_ll = source_ll + log_det_W + log_det_sphere
+    return jnp.sum(sample_ll), jnp.asarray(y_chunk.shape[1], dtype=sample_ll.dtype)
+
+
 def compute_multimodel_loglikelihood(
     y_all: jnp.ndarray,
     W_all: jnp.ndarray,
