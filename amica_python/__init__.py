@@ -14,6 +14,19 @@ References
        (2008). Newton Method for the ICA Mixture Model. ICASSP 2008.
 """
 
+import os as _os
+
+_cache_dir = _os.environ.get('JAX_COMPILATION_CACHE_DIR') or _os.path.join(
+    _os.path.expanduser('~'), '.cache', 'amica-python', 'jax_cache'
+)
+try:
+    _os.makedirs(_cache_dir, exist_ok=True)
+    import jax as _jax
+    _jax.config.update('jax_compilation_cache_dir', _cache_dir)
+    _jax.config.update('jax_persistent_cache_min_compile_time_secs', 1.0)
+except Exception:
+    pass
+
 from .config import AmicaConfig
 from .solver import Amica, AmicaResult
 
