@@ -15,3 +15,10 @@ tmpdata*.fdt
 *.out
 *.err
 slurm-*.out
+
+# Validation/benchmark (moved to amica-benchmark repo)
+validation/
+logs/
+
+# Stray build artifacts
+*.f90
