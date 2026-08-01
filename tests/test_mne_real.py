@@ -314,7 +314,7 @@ def test_fit_ica_default_rank_deficient_reconstructs(mne):
     raw = _make_avg_ref_raw(mne)
     n_ch = len(raw.ch_names)
 
-    with pytest.warns(RuntimeWarning, match="near-zero-variance"):
+    with pytest.warns(RuntimeWarning, match="Estimated data rank"):
         ica = fit_ica(raw, max_iter=15, random_state=0, fit_params={"do_newton": False})
 
     # the degenerate direction is dropped, not fitted
@@ -343,7 +343,7 @@ def test_fit_ica_apply_with_nonempty_exclude(mne):
     from amica import fit_ica
 
     raw = _make_avg_ref_raw(mne)
-    with pytest.warns(RuntimeWarning, match="near-zero-variance"):
+    with pytest.warns(RuntimeWarning, match="Estimated data rank"):
         ica = fit_ica(raw, max_iter=15, random_state=0, fit_params={"do_newton": False})
 
     out = ica.apply(raw.copy(), exclude=[0], verbose="ERROR")
@@ -355,3 +355,49 @@ def test_fit_ica_apply_with_nonempty_exclude(mne):
     # ... but the recording survived: amplitude stays the same order of magnitude
     ratio = x_out.std() / x_in.std()
     assert 0.3 < ratio < 1.05, f"amplitude ratio {ratio:.3f} after removing 1 component"
+
+
+def test_fit_ica_explicit_n_components_above_rank_raises(mne):
+    """An explicit n_components larger than the data rank is an error, not something
+    to silently reinterpret. Regression test for the review finding that the first
+    version of the rank guard overrode explicit user requests."""
+    from amica import fit_ica
+
+    raw = _make_avg_ref_raw(mne)
+    n_ch = len(raw.ch_names)
+    with pytest.raises(ValueError, match="exceeds the estimated rank"):
+        fit_ica(raw, n_components=n_ch, max_iter=5, fit_params={"do_newton": False})
+
+    # at or below the rank it proceeds without complaint
+    ica = fit_ica(raw, n_components=n_ch - 1, max_iter=5, fit_params={"do_newton": False})
+    assert ica.n_components_ == n_ch - 1
+
+
+def test_rank_guard_keeps_genuine_low_variance_component(mne):
+    """A real but very weak independent mode must survive the rank guard.
+
+    Two orthogonal spatial modes whose standard deviations differ by 1e-9 — far below
+    a sqrt(eps) threshold but far above the SVD rank tolerance. Both are genuine, so
+    both must be fitted; only the average-reference null space may be dropped.
+    """
+    from amica import fit_ica
+
+    rng = np.random.RandomState(3)
+    n_samp = 4000
+    u1 = np.array([1.0, -1.0, 0.0]) / np.sqrt(2.0)
+    u2 = np.array([1.0, 1.0, -2.0]) / np.sqrt(6.0)
+    z1 = rng.laplace(size=n_samp)
+    z1 -= z1.mean()
+    z2 = rng.laplace(size=n_samp) * 1e-9
+    z2 -= z2.mean()
+    data = (np.outer(u1, z1) + np.outer(u2, z2)) * 1e-6  # rank 2 of 3, sums to zero
+
+    info = mne.create_info(["EEG000", "EEG001", "EEG002"], sfreq=250, ch_types="eeg")
+    raw = mne.io.RawArray(data, info)
+
+    with pytest.warns(RuntimeWarning, match="Estimated data rank"):
+        ica = fit_ica(raw, max_iter=5, random_state=0, fit_params={"do_newton": False})
+
+    assert ica.n_components_ == 2, (
+        f"kept {ica.n_components_} components; the 1e-9 mode is genuine and must not be dropped"
+    )

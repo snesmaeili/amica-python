@@ -147,7 +147,11 @@ def fit_ica(
     inst : mne.io.Raw | mne.Epochs
         MNE data object.
     n_components : int | None
-        Number of ICA components. If None, equals n_channels.
+        Number of PCA components to fit. ``None`` (default) uses the estimated
+        numerical rank of the data, which is one less than the channel count for
+        average-referenced EEG and lower still after channel interpolation; a
+        ``RuntimeWarning`` reports the value chosen. Passing a value greater than
+        the estimated rank raises ``ValueError`` rather than being silently reduced.
     max_iter : int
         Maximum AMICA iterations. Default 2000.
     num_mix : int
@@ -292,20 +296,33 @@ def fit_ica(
     # the degenerate directions are always trailing, so truncating n_comp removes
     # exactly those. MNE keeps the full pca_components_ and restores the dropped
     # directions as PCA residual at their true (negligible) amplitude.
+    # Use the standard SVD numerical-rank tolerance (the rule behind
+    # np.linalg.matrix_rank): sigma_max * max(matrix shape) * eps. A looser
+    # threshold would discard genuine low-variance components; a tighter one would
+    # leave the ill-conditioned column in place.
     stds_flat = comp_stds.ravel()
-    degenerate = stds_flat <= stds_flat.max() * np.sqrt(np.finfo(pca_data.dtype).eps)
-    if degenerate.any():
-        n_keep = int(np.argmax(degenerate))
-        if n_keep == 0:
+    rank_tol = stds_flat[0] * max(data_centered.shape) * np.finfo(pca_data.dtype).eps
+    n_keep = int(np.count_nonzero(stds_flat > rank_tol))  # SVD order makes this a prefix
+
+    if n_keep < 2:
+        raise ValueError(
+            f"Estimated data rank is {n_keep}; ICA needs at least 2 components. The "
+            "input appears constant or degenerate after pre-whitening."
+        )
+    if n_keep < n_comp:
+        if n_components is not None:
+            # An explicit request we cannot honour is an error, not something to
+            # silently reinterpret.
             raise ValueError(
-                "All PCA components have near-zero variance; the data appear to be "
-                "constant or empty after pre-whitening."
+                f"n_components={n_components} exceeds the estimated rank of the data "
+                f"({n_keep} from {n_channels} selected channels). Average referencing "
+                "reduces rank by one. Pass n_components<=" + f"{n_keep}."
             )
         warnings.warn(
-            f"Dropping {n_comp - n_keep} near-zero-variance PCA component(s): the data "
-            f"appear rank-deficient (rank {n_keep} of {n_comp} channels), which is "
-            "expected for average-referenced EEG. Fitting "
-            f"{n_keep} components. Pass n_components explicitly to silence this.",
+            f"Estimated data rank is {n_keep} from {n_channels} selected channels; "
+            f"fitting {n_keep} components instead of {n_comp}. Rank deficiency is "
+            "expected after average referencing or channel interpolation. Pass "
+            f"n_components={n_keep} to select this explicitly.",
             RuntimeWarning,
             stacklevel=2,
         )
