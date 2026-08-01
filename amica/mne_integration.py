@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import warnings
 
 import numpy as np
 
@@ -281,7 +282,37 @@ def fit_ica(
 
     # Normalize to unit variance per component to stabilize AMICA's gradient.
     comp_stds = np.std(pca_data, axis=1, keepdims=True)
-    comp_stds[comp_stds == 0] = 1.0
+
+    # Drop rank-deficient PCA directions before the division below. Average-referenced
+    # EEG has rank n_channels - 1, so its trailing direction carries only numerical
+    # noise (std ~1e-16). Dividing by that std inflates the corresponding column of W
+    # by ~1e16; np.linalg.pinv then uses a cutoff of rcond * sigma_max that exceeds
+    # every legitimate singular value, the pseudo-inverse collapses, and ICA.apply()
+    # returns near-zero data. Because SVD orders components by decreasing variance,
+    # the degenerate directions are always trailing, so truncating n_comp removes
+    # exactly those. MNE keeps the full pca_components_ and restores the dropped
+    # directions as PCA residual at their true (negligible) amplitude.
+    stds_flat = comp_stds.ravel()
+    degenerate = stds_flat <= stds_flat.max() * np.sqrt(np.finfo(pca_data.dtype).eps)
+    if degenerate.any():
+        n_keep = int(np.argmax(degenerate))
+        if n_keep == 0:
+            raise ValueError(
+                "All PCA components have near-zero variance; the data appear to be "
+                "constant or empty after pre-whitening."
+            )
+        warnings.warn(
+            f"Dropping {n_comp - n_keep} near-zero-variance PCA component(s): the data "
+            f"appear rank-deficient (rank {n_keep} of {n_comp} channels), which is "
+            "expected for average-referenced EEG. Fitting "
+            f"{n_keep} components. Pass n_components explicitly to silence this.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        n_comp = n_keep
+        pca_data = pca_data[:n_comp]
+        comp_stds = comp_stds[:n_comp]
+
     data_for_amica = pca_data / comp_stds
 
     # Step 4: Run AMICA

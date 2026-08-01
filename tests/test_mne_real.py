@@ -287,3 +287,71 @@ def test_fit_ica_multimodel_mne_exposure(mne):
     assert other._amica_model_index != ica._amica_model_index
     assert not np.allclose(other.unmixing_matrix_, ica.unmixing_matrix_)
     assert np.all(np.isfinite(other.get_sources(raw).get_data()))
+
+
+def _make_avg_ref_raw(mne, n_ch=12, n_samp=4000, seed=7):
+    """Average-referenced EEG: rank is exactly n_ch - 1."""
+    rng = np.random.RandomState(seed)
+    sources = rng.laplace(size=(n_ch, n_samp))
+    data = (rng.randn(n_ch, n_ch) @ sources) * 1e-6
+    info = mne.create_info([f"EEG{i:03d}" for i in range(n_ch)], sfreq=250, ch_types="eeg")
+    raw = mne.io.RawArray(data, info)
+    raw.set_eeg_reference("average", projection=False, verbose="ERROR")
+    return raw
+
+
+def test_fit_ica_default_rank_deficient_reconstructs(mne):
+    """fit_ica() with the *default* n_components on average-referenced EEG must
+    return an ICA whose apply() reconstructs the data.
+
+    Regression test. Previously the default kept all n_ch components on rank
+    n_ch-1 data; the trailing PCA direction (std ~1e-16) inflated one column of
+    W by ~1e16, np.linalg.pinv then discarded every legitimate singular value,
+    and apply() returned near-zero data with no warning.
+    """
+    from amica import fit_ica
+
+    raw = _make_avg_ref_raw(mne)
+    n_ch = len(raw.ch_names)
+
+    with pytest.warns(RuntimeWarning, match="near-zero-variance"):
+        ica = fit_ica(raw, max_iter=15, random_state=0, fit_params={"do_newton": False})
+
+    # the degenerate direction is dropped, not fitted
+    assert ica.n_components_ == n_ch - 1
+
+    # pinv must retain every singular value of the unmixing matrix
+    sv = np.linalg.svd(ica.unmixing_matrix_, compute_uv=False)
+    cutoff = np.finfo(ica.unmixing_matrix_.dtype).eps * max(ica.unmixing_matrix_.shape) * sv.max()
+    assert np.all(sv > cutoff), f"pinv would discard {(sv <= cutoff).sum()} of {sv.size} components"
+
+    # apply() with nothing excluded is the identity, to numerical precision
+    out = ica.apply(raw.copy(), exclude=[], verbose="ERROR")
+    x_in, x_out = raw.get_data(), out.get_data()
+    rel = np.linalg.norm(x_out - x_in) / np.linalg.norm(x_in)
+    assert rel < 1e-9, f"reconstruction residual {rel:.3e} (data destroyed?)"
+
+
+def test_fit_ica_apply_with_nonempty_exclude(mne):
+    """apply() with a non-empty exclude removes one component's contribution and
+    leaves the rest of the recording intact.
+
+    Regression test: every other apply() call in this suite passes exclude=[],
+    so the component-removal path — the operation practitioners actually use —
+    was never exercised.
+    """
+    from amica import fit_ica
+
+    raw = _make_avg_ref_raw(mne)
+    with pytest.warns(RuntimeWarning, match="near-zero-variance"):
+        ica = fit_ica(raw, max_iter=15, random_state=0, fit_params={"do_newton": False})
+
+    out = ica.apply(raw.copy(), exclude=[0], verbose="ERROR")
+    x_in, x_out = raw.get_data(), out.get_data()
+
+    assert np.all(np.isfinite(x_out))
+    # something was removed ...
+    assert not np.allclose(x_out, x_in)
+    # ... but the recording survived: amplitude stays the same order of magnitude
+    ratio = x_out.std() / x_in.std()
+    assert 0.3 < ratio < 1.05, f"amplitude ratio {ratio:.3f} after removing 1 component"
