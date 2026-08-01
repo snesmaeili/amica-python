@@ -1812,8 +1812,22 @@ class Amica:
         if self.config.num_models > 1:
             from .multimodel import compute_model_posteriors
 
+            # Reuse the E-step's chunk size: the intermediate per-model sources here
+            # are (M, n_components, n_samples), so a full-batch pass can dominate peak
+            # memory on a long recording even when the fit itself was chunked.
             model_posteriors = np.asarray(
-                compute_model_posteriors(data_white, W, c, alpha, mu, beta, rho, gm, log_det_sphere)
+                compute_model_posteriors(
+                    data_white,
+                    W,
+                    c,
+                    alpha,
+                    mu,
+                    beta,
+                    rho,
+                    gm,
+                    log_det_sphere,
+                    chunk_size=_eff_chunk_size,
+                )
             )
 
         # ========== Construct Result ==========

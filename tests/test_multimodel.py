@@ -415,3 +415,37 @@ if __name__ == "__main__":
     import sys
 
     sys.exit(pytest.main([__file__, "-q", "-s"]))
+
+
+def test_mm_posteriors_chunked_matches_full_batch():
+    """Chunking the post-fit posterior pass changes memory, not results.
+
+    The posteriors are (M, T), but the intermediate per-model sources are
+    (M, n, T), so a full-batch pass dominated peak memory on long recordings
+    even when the fit itself was chunked. Each sample's posterior depends only
+    on that sample, so blocks must agree with the single pass.
+    """
+    rng = _rng(11)
+    n, J, T, M = 4, 3, 257, 3  # T deliberately not a multiple of any chunk size
+    W_all = jnp.stack([_make_params(rng, n, J)[0] for _ in range(M)])
+    c_all = jnp.asarray(rng.standard_normal((M, n)) * 0.05, dtype=jnp.float64)
+    alpha = jnp.stack([_make_params(rng, n, J)[1] for _ in range(M)])
+    muu = jnp.stack([_make_params(rng, n, J)[2] for _ in range(M)])
+    beta = jnp.stack([_make_params(rng, n, J)[3] for _ in range(M)])
+    rho = jnp.stack([_make_params(rng, n, J)[4] for _ in range(M)])
+    gm = jnp.asarray([0.5, 0.3, 0.2], dtype=jnp.float64)
+    data = jnp.asarray(rng.standard_normal((n, T)), dtype=jnp.float64)
+
+    full = np.asarray(mm.compute_model_posteriors(data, W_all, c_all, alpha, muu, beta, rho, gm, 0.0))
+    assert full.shape == (M, T)
+
+    for chunk in (16, 64, 256, T, T + 10):
+        chunked = np.asarray(
+            mm.compute_model_posteriors(
+                data, W_all, c_all, alpha, muu, beta, rho, gm, 0.0, chunk_size=chunk
+            )
+        )
+        assert chunked.shape == full.shape, f"shape changed at chunk_size={chunk}"
+        assert np.allclose(chunked, full, rtol=0, atol=ATOL), (
+            f"chunk_size={chunk} disagrees with the full-batch pass"
+        )

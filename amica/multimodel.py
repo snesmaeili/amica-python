@@ -466,13 +466,43 @@ def compute_model_posteriors(
     rho_all,
     gm,
     log_det_sphere: float = 0.0,
+    chunk_size: int | None = None,
 ) -> jnp.ndarray:
     """Model posterior time-course v (M, n_samples) for fitted parameters.
 
     Called once after fitting to populate ``AmicaResult.model_posteriors_`` —
     the p(h|t) curve that tracks which regime is active (Hsu 2018).
+
+    Parameters
+    ----------
+    chunk_size : int | None
+        Process the time axis in blocks of this many samples. ``None`` computes
+        in one pass. The returned posteriors are (M, n_samples) either way, but
+        the intermediate per-model sources are (M, n_components, n_samples), so
+        a full-batch pass on a long recording can dominate peak memory even when
+        the fit itself was chunked. Chunking bounds that intermediate to
+        (M, n_components, chunk_size); results are identical because each sample's
+        posterior depends only on that sample.
     """
-    _P, _LL, v, _y = _model_posteriors_from_data(
-        data_white, W_all, c_all, alpha_all, mu_all, beta_all, rho_all, gm, log_det_sphere
-    )
-    return v
+    n_samples = data_white.shape[1]
+    if chunk_size is None or chunk_size >= n_samples:
+        _P, _LL, v, _y = _model_posteriors_from_data(
+            data_white, W_all, c_all, alpha_all, mu_all, beta_all, rho_all, gm, log_det_sphere
+        )
+        return v
+
+    blocks = []
+    for start in range(0, n_samples, chunk_size):
+        _P, _LL, v_blk, _y = _model_posteriors_from_data(
+            data_white[:, start : start + chunk_size],
+            W_all,
+            c_all,
+            alpha_all,
+            mu_all,
+            beta_all,
+            rho_all,
+            gm,
+            log_det_sphere,
+        )
+        blocks.append(v_blk)
+    return jnp.concatenate(blocks, axis=1)
