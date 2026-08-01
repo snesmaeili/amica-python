@@ -1682,7 +1682,7 @@ class Amica:
             LL.append(ll_val)
 
             # ========== Sample Rejection (Fortran 1.7 do_reject) ==========
-            # Monotone cumulative mask, faithful to amica17 reject_data: each round
+            # Monotone cumulative mask following amica17 reject_data: each round
             # recomputes the threshold mean - rejsig*std of the per-sample TOTAL LL over
             # the CURRENT good samples and drops those below it. Rejected samples are
             # never re-accepted and are zero-weighted in the EM via `sample_weight` (the

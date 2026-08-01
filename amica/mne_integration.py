@@ -150,8 +150,9 @@ def fit_ica(
         Number of PCA components to fit. ``None`` (default) uses the estimated
         numerical rank of the data, which is one less than the channel count for
         average-referenced EEG and lower still after channel interpolation; a
-        ``RuntimeWarning`` reports the value chosen. Passing a value greater than
-        the estimated rank raises ``ValueError`` rather than being silently reduced.
+        ``RuntimeWarning`` reports the value chosen. An explicit value is never
+        silently reduced: exceeding the number of selected channels, or exceeding
+        the estimated rank, raises ``ValueError``.
     max_iter : int
         Maximum AMICA iterations. Default 2000.
     num_mix : int
