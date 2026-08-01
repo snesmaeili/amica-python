@@ -436,7 +436,9 @@ def test_mm_posteriors_chunked_matches_full_batch():
     gm = jnp.asarray([0.5, 0.3, 0.2], dtype=jnp.float64)
     data = jnp.asarray(rng.standard_normal((n, T)), dtype=jnp.float64)
 
-    full = np.asarray(mm.compute_model_posteriors(data, W_all, c_all, alpha, muu, beta, rho, gm, 0.0))
+    full = np.asarray(
+        mm.compute_model_posteriors(data, W_all, c_all, alpha, muu, beta, rho, gm, 0.0)
+    )
     assert full.shape == (M, T)
 
     for chunk in (16, 64, 256, T, T + 10):

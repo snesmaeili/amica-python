@@ -456,6 +456,45 @@ def m_step_mm(
     )
 
 
+def _blocked_posteriors(data_white, args, log_det_sphere, chunk_size, pick):
+    """Run ``_model_posteriors_from_data`` over time blocks and concatenate ``pick``.
+
+    The returned quantities are per-sample, but the intermediate per-model sources
+    are (M, n_components, n_samples); blocking bounds that to the chunk length.
+    Each sample depends only on itself, so blocked and full-batch results agree.
+    """
+    n_samples = data_white.shape[1]
+    if chunk_size is None or chunk_size >= n_samples:
+        return pick(_model_posteriors_from_data(data_white, *args, log_det_sphere))
+    blocks = [
+        pick(_model_posteriors_from_data(data_white[:, s : s + chunk_size], *args, log_det_sphere))
+        for s in range(0, n_samples, chunk_size)
+    ]
+    return jnp.concatenate(blocks, axis=-1)
+
+
+def compute_model_sample_loglik(
+    data_white,
+    W_all,
+    c_all,
+    alpha_all,
+    mu_all,
+    beta_all,
+    rho_all,
+    gm,
+    log_det_sphere: float = 0.0,
+    chunk_size: int | None = None,
+) -> jnp.ndarray:
+    """Per-sample mixture log-likelihood LL_t (n_samples,) for fitted parameters.
+
+    Used by likelihood-based sample rejection, which evaluates it once per
+    rejection round inside the EM loop. See ``chunk_size`` on
+    :func:`compute_model_posteriors`.
+    """
+    args = (W_all, c_all, alpha_all, mu_all, beta_all, rho_all, gm)
+    return _blocked_posteriors(data_white, args, log_det_sphere, chunk_size, lambda r: r[1])
+
+
 def compute_model_posteriors(
     data_white,
     W_all,
@@ -484,25 +523,5 @@ def compute_model_posteriors(
         (M, n_components, chunk_size); results are identical because each sample's
         posterior depends only on that sample.
     """
-    n_samples = data_white.shape[1]
-    if chunk_size is None or chunk_size >= n_samples:
-        _P, _LL, v, _y = _model_posteriors_from_data(
-            data_white, W_all, c_all, alpha_all, mu_all, beta_all, rho_all, gm, log_det_sphere
-        )
-        return v
-
-    blocks = []
-    for start in range(0, n_samples, chunk_size):
-        _P, _LL, v_blk, _y = _model_posteriors_from_data(
-            data_white[:, start : start + chunk_size],
-            W_all,
-            c_all,
-            alpha_all,
-            mu_all,
-            beta_all,
-            rho_all,
-            gm,
-            log_det_sphere,
-        )
-        blocks.append(v_blk)
-    return jnp.concatenate(blocks, axis=1)
+    args = (W_all, c_all, alpha_all, mu_all, beta_all, rho_all, gm)
+    return _blocked_posteriors(data_white, args, log_det_sphere, chunk_size, lambda r: r[2])
