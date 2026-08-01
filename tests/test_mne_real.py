@@ -401,3 +401,23 @@ def test_rank_guard_keeps_genuine_low_variance_component(mne):
     assert ica.n_components_ == 2, (
         f"kept {ica.n_components_} components; the 1e-9 mode is genuine and must not be dropped"
     )
+
+
+@pytest.mark.parametrize("bad", [0, -1, 1])
+def test_fit_ica_rejects_out_of_range_n_components(mne, bad):
+    """n_components below 2 must fail with one clear message.
+
+    Regression test: 0 reached the rank check and raised IndexError on an empty
+    array, -1 was silently reinterpreted by negative-slice semantics into
+    n_channels-1 components, and 1 was reported as "estimated data rank is 1"
+    even on full-rank data, misattributing an explicit request to data quality.
+    """
+    from amica import fit_ica
+
+    rng = np.random.RandomState(0)
+    data = (rng.randn(6, 6) @ rng.laplace(size=(6, 3000))) * 1e-6
+    info = mne.create_info([f"EEG{i:03d}" for i in range(6)], sfreq=250, ch_types="eeg")
+    raw = mne.io.RawArray(data, info)
+
+    with pytest.raises(ValueError, match="at least 2 components"):
+        fit_ica(raw, n_components=bad, max_iter=3, fit_params={"do_newton": False})

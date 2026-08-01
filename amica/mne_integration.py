@@ -271,6 +271,13 @@ def fit_ica(
                 f"n_components={n_components} exceeds the number of selected channels "
                 f"({n_channels}). Pass n_components<={n_channels}."
             )
+        if n_components < 2:
+            # Validate the lower bound here so 0 and negative values fail with a clear
+            # message rather than an IndexError on an empty array or a negative slice,
+            # and so n_components=1 is not misreported as a rank-1 dataset.
+            raise ValueError(
+                f"n_components={n_components} is invalid; ICA needs at least 2 components."
+            )
         n_comp = n_components
 
     # Decimation
