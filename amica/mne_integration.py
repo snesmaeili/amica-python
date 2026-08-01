@@ -188,7 +188,7 @@ def fit_ica(
     - ``reject`` / ``flat`` drop bad *epochs* by amplitude *before* the
       decomposition (standard MNE preprocessing).
     - AMICA's own ``do_reject`` drops individual outlier *samples* by their model
-      log-likelihood *during* EM, faithful to Fortran AMICA 1.7 (works for
+      log-likelihood *during* EM, following the Fortran AMICA 1.7 procedure (works for
       ``num_models`` = 1 and > 1; multi-model uses one global mask on the mixture LL).
       Enable it via ``fit_params``::
 
@@ -262,7 +262,15 @@ def fit_ica(
     n_channels, n_samples = raw_data.shape
 
     # Resolve n_components
-    n_comp = n_channels if n_components is None else min(n_components, n_channels)
+    if n_components is None:
+        n_comp = n_channels
+    else:
+        if n_components > n_channels:
+            raise ValueError(
+                f"n_components={n_components} exceeds the number of selected channels "
+                f"({n_channels}). Pass n_components<={n_channels}."
+            )
+        n_comp = n_components
 
     # Decimation
     if decim is not None and decim > 1:

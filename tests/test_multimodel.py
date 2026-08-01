@@ -451,3 +451,80 @@ def test_mm_posteriors_chunked_matches_full_batch():
         assert np.allclose(chunked, full, rtol=0, atol=ATOL), (
             f"chunk_size={chunk} disagrees with the full-batch pass"
         )
+
+
+def test_mm_sample_loglik_chunked_matches_full_batch():
+    """compute_model_sample_loglik is the rejection path's entry point and must
+    agree with the full-batch pass at every chunk size, including its 1-D
+    concatenate branch.
+
+    Added after review noted the helper shipped with no direct test.
+    """
+    rng = _rng(13)
+    n, J, T, M = 4, 3, 199, 2  # T prime, so no chunk size divides it
+    W_all = jnp.stack([_make_params(rng, n, J)[0] for _ in range(M)])
+    c_all = jnp.asarray(rng.standard_normal((M, n)) * 0.05, dtype=jnp.float64)
+    alpha = jnp.stack([_make_params(rng, n, J)[1] for _ in range(M)])
+    muu = jnp.stack([_make_params(rng, n, J)[2] for _ in range(M)])
+    beta = jnp.stack([_make_params(rng, n, J)[3] for _ in range(M)])
+    rho = jnp.stack([_make_params(rng, n, J)[4] for _ in range(M)])
+    gm = jnp.asarray([0.6, 0.4], dtype=jnp.float64)
+    data = jnp.asarray(rng.standard_normal((n, T)), dtype=jnp.float64)
+
+    full = np.asarray(
+        mm.compute_model_sample_loglik(data, W_all, c_all, alpha, muu, beta, rho, gm, 0.0)
+    )
+    assert full.shape == (T,)  # per-sample, 1-D
+
+    for chunk in (7, 32, 128, T, T + 5):
+        chunked = np.asarray(
+            mm.compute_model_sample_loglik(
+                data, W_all, c_all, alpha, muu, beta, rho, gm, 0.0, chunk_size=chunk
+            )
+        )
+        assert chunked.shape == full.shape, f"shape changed at chunk_size={chunk}"
+        assert np.allclose(chunked, full, rtol=0, atol=ATOL), (
+            f"chunk_size={chunk} disagrees with the full-batch pass"
+        )
+
+    # it is the mixture LL: logsumexp over models of the per-model P
+    assert np.all(np.isfinite(full))
+
+
+def test_solver_forwards_chunk_size_to_rejection_loglik(monkeypatch):
+    """The solver must forward its resolved chunk size to the rejection-path
+    log-likelihood, not just to the E-step.
+
+    Covers the wiring rather than the helper: review noted that equivalence was
+    tested but the forwarding was not.
+    """
+    from amica import Amica, AmicaConfig
+
+    real_fn = mm.compute_model_sample_loglik  # capture before patching
+    seen = {}
+
+    def _spy(*args, **kwargs):
+        seen["chunk_size"] = kwargs.get("chunk_size", "MISSING")
+        return real_fn(*args, **kwargs)
+
+    monkeypatch.setattr(mm, "compute_model_sample_loglik", _spy)
+
+    rng = np.random.default_rng(5)
+    data = rng.standard_normal((3, 400))
+    cfg = AmicaConfig(
+        num_models=2,
+        num_mix_comps=2,
+        max_iter=8,
+        do_reject=True,
+        rejstart=2,
+        rejint=1,
+        numrej=1,
+        chunk_size=64,
+        do_newton=False,
+    )
+    Amica(cfg, random_state=0).fit(data)
+
+    assert "chunk_size" in seen, "rejection path never called compute_model_sample_loglik"
+    assert seen["chunk_size"] == 64, (
+        f"solver forwarded chunk_size={seen['chunk_size']!r}; expected 64"
+    )

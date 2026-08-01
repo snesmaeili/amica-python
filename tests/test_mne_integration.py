@@ -223,7 +223,13 @@ def test_fit_ica_picks_list(AmicaMock, mock_mne_modules):
     mock_solver.fit.return_value = mock_result
     AmicaMock.return_value = mock_solver
 
-    ica_list = mne_integration.fit_ica(raw, n_components=4, picks=[0, 1])
+    # n_components must not exceed the number of *picked* channels. Both
+    # sklearn's PCA and mne.preprocessing.ICA raise here rather than silently
+    # clipping, and so do we.
+    with pytest.raises(ValueError, match="exceeds the number of selected channels"):
+        mne_integration.fit_ica(raw, n_components=4, picks=[0, 1])
+
+    ica_list = mne_integration.fit_ica(raw, n_components=2, picks=[0, 1])
     assert hasattr(ica_list, "amica_result_")
 
 

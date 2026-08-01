@@ -128,10 +128,12 @@ Scope of that validation, stated precisely so it is not over-read:
   log-likelihoods, unmixing matrices and adaptive-density parameters agree closely.
 - **The reference was a locally patched build.** Stock AMICA 1.7 does not converge on these fixtures;
   three corrections were required, including a generalized-Gaussian score exponent fix. The patched
-  source and build recipe ship with the validation archive. Comparisons against an unpatched upstream
-  build will not reproduce these numbers.
-- **Not covered:** multi-model parity against Fortran, long high-dimensional optimisation runs, and
-  likelihood-based sample rejection.
+  source and build recipe are included in the validation archive accompanying the manuscript; that
+  archive is not yet deposited, so the patch is not currently redistributable from this repository.
+  Comparisons against an unpatched upstream build will not reproduce these numbers.
+- **Not covered by the parity fixtures:** multi-model agreement with Fortran, long high-dimensional
+  optimisation runs, and likelihood-based sample rejection. Rejection follows the reference procedure
+  but its equivalence was not measured against the reference build.
 
 Backend agreement (JAX-GPU / JAX-CPU / NumPy-CPU) is close in aggregate, but component-level agreement
 is not guaranteed on every recording: fits that reach the same likelihood can still differ in
