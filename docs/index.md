@@ -42,7 +42,7 @@ Find troubleshooting notes for installation, JAX, MNE integration, and validatio
 - Optional JAX CPU/GPU acceleration
 - Drop-in MNE-Python integration
 - Multi-model AMICA support
-- Numerical validation against the original MATLAB AMICA implementation
+- Numerical validation against the Fortran AMICA 1.7 reference implementation
 - Designed for reproducible EEG and neuroimaging workflows
 
 ## Minimal Example

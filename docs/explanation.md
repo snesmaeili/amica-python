@@ -100,7 +100,7 @@ ______________________________________________________________________
 
 ## Numerical validation
 
-amica has been validated against the original MATLAB AMICA implementation across a range of configurations.
+amica has been validated against the Fortran AMICA 1.7 reference implementation on the tested single-model configurations. The reference used was a locally patched build; see the README for the scope of that validation and what it does not cover.
 
 The documentation includes validation experiments, reproducibility analyses, and performance benchmarks demonstrating numerical agreement between the two implementations.
 
