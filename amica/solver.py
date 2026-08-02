@@ -1682,7 +1682,7 @@ class Amica:
             LL.append(ll_val)
 
             # ========== Sample Rejection (Fortran 1.7 do_reject) ==========
-            # Monotone cumulative mask, faithful to amica17 reject_data: each round
+            # Monotone cumulative mask following amica17 reject_data: each round
             # recomputes the threshold mean - rejsig*std of the per-sample TOTAL LL over
             # the CURRENT good samples and drops those below it. Rejected samples are
             # never re-accepted and are zero-weighted in the EM via `sample_weight` (the
@@ -1701,12 +1701,25 @@ class Amica:
                     sample_lls = compute_source_loglikelihood(y_rej, alpha, mu, beta, rho)
                     sample_lls = np.asarray(sample_lls + compute_log_det_W(W) + log_det_sphere)
                 else:
-                    from .multimodel import _model_posteriors_from_data
+                    from .multimodel import compute_model_sample_loglik
 
-                    _P, _LL_t, _v, _y = _model_posteriors_from_data(
-                        data_white, W, c, alpha, mu, beta, rho, gm, log_det_sphere
+                    # Same (M, n_components, n_samples) intermediate as the post-fit
+                    # posterior pass, but this runs once per rejection round, so it is
+                    # chunked on the same budget.
+                    sample_lls = np.asarray(
+                        compute_model_sample_loglik(
+                            data_white,
+                            W,
+                            c,
+                            alpha,
+                            mu,
+                            beta,
+                            rho,
+                            gm,
+                            log_det_sphere,
+                            chunk_size=_eff_chunk_size,
+                        )
                     )
-                    sample_lls = np.asarray(_LL_t)
 
                 if good_mask is None:
                     good_mask = np.ones(n_samples_orig, dtype=bool)
@@ -1812,8 +1825,22 @@ class Amica:
         if self.config.num_models > 1:
             from .multimodel import compute_model_posteriors
 
+            # Reuse the E-step's chunk size: the intermediate per-model sources here
+            # are (M, n_components, n_samples), so a full-batch pass can dominate peak
+            # memory on a long recording even when the fit itself was chunked.
             model_posteriors = np.asarray(
-                compute_model_posteriors(data_white, W, c, alpha, mu, beta, rho, gm, log_det_sphere)
+                compute_model_posteriors(
+                    data_white,
+                    W,
+                    c,
+                    alpha,
+                    mu,
+                    beta,
+                    rho,
+                    gm,
+                    log_det_sphere,
+                    chunk_size=_eff_chunk_size,
+                )
             )
 
         # ========== Construct Result ==========

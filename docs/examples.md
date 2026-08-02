@@ -61,7 +61,7 @@ ______________________________________________________________________
 
 The repository also includes additional examples that are not part of the online gallery:
 
-- Validation experiments comparing amica with the original MATLAB implementation.
+- Validation experiments comparing amica with the Fortran AMICA 1.7 reference implementation.
 - HPC / Slurm templates for running AMICA on computing clusters.
 - Jupyter notebooks demonstrating complete EEG workflows.
 

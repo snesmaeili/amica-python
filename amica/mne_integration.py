@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import warnings
 
 import numpy as np
 
@@ -146,7 +147,12 @@ def fit_ica(
     inst : mne.io.Raw | mne.Epochs
         MNE data object.
     n_components : int | None
-        Number of ICA components. If None, equals n_channels.
+        Number of PCA components to fit. ``None`` (default) uses the estimated
+        numerical rank of the data, which is one less than the channel count for
+        average-referenced EEG and lower still after channel interpolation; a
+        ``RuntimeWarning`` reports the value chosen. An explicit value is never
+        silently reduced: exceeding the number of selected channels, or exceeding
+        the estimated rank, raises ``ValueError``.
     max_iter : int
         Maximum AMICA iterations. Default 2000.
     num_mix : int
@@ -183,7 +189,7 @@ def fit_ica(
     - ``reject`` / ``flat`` drop bad *epochs* by amplitude *before* the
       decomposition (standard MNE preprocessing).
     - AMICA's own ``do_reject`` drops individual outlier *samples* by their model
-      log-likelihood *during* EM, faithful to Fortran AMICA 1.7 (works for
+      log-likelihood *during* EM, following the Fortran AMICA 1.7 procedure (works for
       ``num_models`` = 1 and > 1; multi-model uses one global mask on the mixture LL).
       Enable it via ``fit_params``::
 
@@ -257,7 +263,22 @@ def fit_ica(
     n_channels, n_samples = raw_data.shape
 
     # Resolve n_components
-    n_comp = n_channels if n_components is None else min(n_components, n_channels)
+    if n_components is None:
+        n_comp = n_channels
+    else:
+        if n_components > n_channels:
+            raise ValueError(
+                f"n_components={n_components} exceeds the number of selected channels "
+                f"({n_channels}). Pass n_components<={n_channels}."
+            )
+        if n_components < 2:
+            # Validate the lower bound here so 0 and negative values fail with a clear
+            # message rather than an IndexError on an empty array or a negative slice,
+            # and so n_components=1 is not misreported as a rank-1 dataset.
+            raise ValueError(
+                f"n_components={n_components} is invalid; ICA needs at least 2 components."
+            )
+        n_comp = n_components
 
     # Decimation
     if decim is not None and decim > 1:
@@ -281,7 +302,50 @@ def fit_ica(
 
     # Normalize to unit variance per component to stabilize AMICA's gradient.
     comp_stds = np.std(pca_data, axis=1, keepdims=True)
-    comp_stds[comp_stds == 0] = 1.0
+
+    # Drop rank-deficient PCA directions before the division below. Average-referenced
+    # EEG has rank n_channels - 1, so its trailing direction carries only numerical
+    # noise (std ~1e-16). Dividing by that std inflates the corresponding column of W
+    # by ~1e16; np.linalg.pinv then uses a cutoff of rcond * sigma_max that exceeds
+    # every legitimate singular value, the pseudo-inverse collapses, and ICA.apply()
+    # returns near-zero data. Because SVD orders components by decreasing variance,
+    # the degenerate directions are always trailing, so truncating n_comp removes
+    # exactly those. MNE keeps the full pca_components_ and restores the dropped
+    # directions as PCA residual at their true (negligible) amplitude.
+    # Use the standard SVD numerical-rank tolerance (the rule behind
+    # np.linalg.matrix_rank): sigma_max * max(matrix shape) * eps. A looser
+    # threshold would discard genuine low-variance components; a tighter one would
+    # leave the ill-conditioned column in place.
+    stds_flat = comp_stds.ravel()
+    rank_tol = stds_flat[0] * max(data_centered.shape) * np.finfo(pca_data.dtype).eps
+    n_keep = int(np.count_nonzero(stds_flat > rank_tol))  # SVD order makes this a prefix
+
+    if n_keep < 2:
+        raise ValueError(
+            f"Estimated data rank is {n_keep}; ICA needs at least 2 components. The "
+            "input appears constant or degenerate after pre-whitening."
+        )
+    if n_keep < n_comp:
+        if n_components is not None:
+            # An explicit request we cannot honour is an error, not something to
+            # silently reinterpret.
+            raise ValueError(
+                f"n_components={n_components} exceeds the estimated rank of the data "
+                f"({n_keep} from {n_channels} selected channels). Average referencing "
+                "reduces rank by one. Pass n_components<=" + f"{n_keep}."
+            )
+        warnings.warn(
+            f"Estimated data rank is {n_keep} from {n_channels} selected channels; "
+            f"fitting {n_keep} components instead of {n_comp}. Rank deficiency is "
+            "expected after average referencing or channel interpolation. Pass "
+            f"n_components={n_keep} to select this explicitly.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        n_comp = n_keep
+        pca_data = pca_data[:n_comp]
+        comp_stds = comp_stds[:n_comp]
+
     data_for_amica = pca_data / comp_stds
 
     # Step 4: Run AMICA

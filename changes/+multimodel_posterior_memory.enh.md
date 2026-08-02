@@ -1,0 +1,1 @@
+Multi-model fits no longer materialise the full `(n_models, n_components, n_samples)` source array when computing model posteriors or when likelihood-based sample rejection is enabled. Both paths now honour `chunk_size`, bounding peak memory on long recordings. Results are unchanged.

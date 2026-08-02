@@ -54,11 +54,11 @@ AMICA supports fitting multiple ICA models (`num_models > 1`) to capture non-sta
 
 ______________________________________________________________________
 
-## How does amica compare with the original MATLAB AMICA?
+## How does amica compare with the reference AMICA implementation?
 
 amica is designed to reproduce the original AMICA algorithm while providing a native Python implementation, optional JAX acceleration, and seamless integration with the scientific Python ecosystem.
 
-Validation experiments comparing amica with the original MATLAB implementation are available in the documentation.
+Validation experiments comparing amica with the Fortran AMICA 1.7 reference are available in the documentation. Agreement is established for single-model configurations against a locally patched build of the reference; multi-model parity is not covered.
 
 ______________________________________________________________________
 

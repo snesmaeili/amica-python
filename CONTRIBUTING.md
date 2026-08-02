@@ -194,7 +194,7 @@ ______________________________________________________________________
 
 Contributions that compare amica against other ICA implementations are especially valuable, including:
 
-- MATLAB AMICA
+- Fortran AMICA 1.7
 - Picard
 - FastICA
 - Infomax
