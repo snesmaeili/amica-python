@@ -9,7 +9,7 @@
 
 > **amica** is a native Python implementation of **AMICA (Adaptive Mixture Independent Component Analysis)**, one of the highest-performing ICA algorithms for EEG source separation.
 
-Originally distributed as a closed-source Fortran executable from UCSD, this implementation of amica provides an open, extensible implementation with optional **JAX acceleration**, seamless **MNE-Python integration**, and a modern Python API for reproducible neuroimaging workflows.
+The canonical implementation is a Fortran program from UCSD, typically driven through MATLAB- or EEGLAB-based workflows. amica provides an open, extensible Python implementation with optional **JAX acceleration**, seamless **MNE-Python integration**, and a modern Python API for reproducible neuroimaging workflows.
 
 > **Status:** amica reproduces the Fortran AMICA 1.7 reference on the tested single-model configurations. Validation scope, the exact reference build used, and known limitations are described under [Validation](#validation).
 
@@ -30,39 +30,39 @@ ______________________________________________________________________
 
 # Installation
 
-## Using pip
+```bash
+pip install amica
+```
+
+The core install depends only on NumPy and SciPy. Everything else is an optional
+extra, so a CPU-only NumPy install stays small:
+
+```bash
+pip install "amica[jax]"        # JAX backend, JIT-compiled CPU
+pip install "amica[gpu]"        # JAX with CUDA 12 (Linux only)
+pip install "amica[mne]"        # MNE-Python integration, fit_ica()
+pip install "amica[icalabel]"   # ICLabel component classification
+pip install "amica[viz]"        # plotting and density diagnostics
+pip install "amica[all]"        # everything above
+```
+
+## From source
+
+For development, or to run the test suite:
 
 ```bash
 git clone https://github.com/snesmaeili/amica.git
 cd amica
-pip install -e .
-```
-
-Install optional dependencies:
-
-```bash
-pip install -e ".[jax]"
-pip install -e ".[mne]"
 pip install -e ".[dev]"
-pip install -e ".[all]"
 ```
 
-## Using uv
+With `uv`:
 
 ```bash
 git clone https://github.com/snesmaeili/amica.git
 cd amica
-
-uv venv
-source .venv/bin/activate
-
-uv pip install -e .
-```
-
-or
-
-```bash
-uv pip install -e ".[all]"
+uv venv && source .venv/bin/activate
+uv pip install -e ".[dev]"
 ```
 
 ______________________________________________________________________
