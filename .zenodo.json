@@ -1,0 +1,54 @@
+{
+  "title": "amica: Adaptive Mixture ICA for Python and MNE-Python",
+  "description": "Native Python implementation of AMICA (Adaptive Mixture ICA) for MNE-Python, with JAX acceleration.",
+  "version": "0.1.0",
+  "upload_type": "software",
+  "license": "bsd-3-clause",
+  "access_right": "open",
+  "creators": [
+    {
+      "name": "Esmaeili, Sina",
+      "affiliation": "Université de Montréal",
+      "orcid": "0000-0002-5335-3235"
+    },
+    {
+      "name": "Abdelhedi, Hamza",
+      "affiliation": "Université de Montréal, Mila",
+      "orcid": "0000-0002-4638-640X"
+    },
+    {
+      "name": "Mantilla Ramos, Yorguin José",
+      "affiliation": "Université de Montréal, Mila",
+      "orcid": "0000-0003-4473-0876"
+    },
+    {
+      "name": "Pascarella, Annalisa",
+      "affiliation": "Istituto per le Applicazioni del Calcolo \"Mauro Picone\" (IAC), Consiglio Nazionale delle Ricerche (CNR), Rome, Italy",
+      "orcid": "0000-0001-8795-0815"
+    },
+    {
+      "name": "Jerbi, Karim",
+      "affiliation": "Université de Montréal, Mila",
+      "orcid": "0000-0002-3790-9651"
+    }
+  ],
+  "keywords": [
+    "EEG",
+    "MEG",
+    "ICA",
+    "AMICA",
+    "MNE-Python",
+    "JAX",
+    "independent component analysis",
+    "source separation",
+    "neuroscience",
+    "reproducibility"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/snesmaeili/amica",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ]
+}
