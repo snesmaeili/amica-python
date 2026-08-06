@@ -29,6 +29,7 @@ authors:
     affiliation: "Université de Montréal, Mila"
 license: BSD-3-Clause
 repository-code: "https://github.com/snesmaeili/amica"
+doi: "10.5281/zenodo.21817485"
 version: "0.1.0"
 date-released: "2026-08-06"
 keywords:

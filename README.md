@@ -6,6 +6,7 @@
 [![PyPI - Version](https://img.shields.io/pypi/v/amica.svg)](https://pypi.org/project/amica/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/amica.svg)](https://pypi.org/project/amica/)
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21817485.svg)](https://doi.org/10.5281/zenodo.21817485)
 
 > **amica** is a native Python implementation of **AMICA (Adaptive Mixture Independent Component Analysis)**, one of the highest-performing ICA algorithms for EEG source separation.
 
