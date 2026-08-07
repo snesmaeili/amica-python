@@ -4,6 +4,7 @@
 [![Docs](https://img.shields.io/github/actions/workflow/status/snesmaeili/amica/docs.yml?branch=main&label=docs)](https://snesmaeili.github.io/amica/)
 [![Codecov](https://img.shields.io/codecov/c/github/snesmaeili/amica)](https://codecov.io/gh/snesmaeili/amica)
 [![PyPI - Version](https://img.shields.io/pypi/v/amica.svg)](https://pypi.org/project/amica/)
+[![conda-forge](https://img.shields.io/conda/vn/conda-forge/amica.svg)](https://anaconda.org/conda-forge/amica)
 [![Python Versions](https://img.shields.io/pypi/pyversions/amica.svg)](https://pypi.org/project/amica/)
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21817485.svg)](https://doi.org/10.5281/zenodo.21817485)
@@ -34,6 +35,19 @@ ______________________________________________________________________
 ```bash
 pip install amica
 ```
+
+or, from conda-forge:
+
+```bash
+conda install -c conda-forge amica
+```
+
+> **Which `amica`?** Install the distribution named `amica`. A separate project,
+> `amica-python`, is an independent implementation of the same algorithm by
+> another author, and it also provides a top-level `amica` module — so the two
+> cannot coexist in one environment. The conda-forge packages are declared
+> mutually exclusive; on PyPI, installing both overwrites files. Run
+> `pip show amica amica-python` to see which one you have.
 
 The core install depends only on NumPy and SciPy. Everything else is an optional
 extra, so a CPU-only NumPy install stays small:

@@ -1,5 +1,21 @@
 # Frequently Asked Questions
 
+## Is this the same project as `amica-python`?
+
+No.
+
+`amica-python` is an independent implementation of the AMICA algorithm by a different author. Both projects install a top-level `amica` module, so only one can be present in an environment at a time: the conda-forge packages are declared mutually exclusive, and on PyPI installing both overwrites files in each.
+
+This documentation describes the distribution published as [`amica`](https://pypi.org/project/amica/). To check which one is installed:
+
+```bash
+pip show amica amica-python
+```
+
+If behaviour does not match what you read here, confirm this first — an `import amica` that succeeds does not by itself tell you which implementation you are running.
+
+______________________________________________________________________
+
 ## Which Python versions are supported?
 
 amica supports **Python 3.10 and newer**.
