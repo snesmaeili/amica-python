@@ -611,6 +611,7 @@ def _amica_step_chunked(
         "update_mu",
         "update_beta",
         "update_rho",
+        "block_size",
     ],
 )
 def _amica_step_fused(
@@ -641,8 +642,9 @@ def _amica_step_fused(
     update_beta,
     update_rho,
     sample_weight=None,
+    block_size=None,
 ):
-    """Single-graph fused full-batch step (Stage 3D).
+    """Single-graph fused step (Stage 3D).
 
     Same contract as ``_amica_step`` but computes responsibilities ONCE via the
     fused accumulator (``compute_chunk_stats`` on the whole batch) and derives
@@ -658,8 +660,13 @@ def _amica_step_fused(
     Unlike the eager ``_amica_step_chunked`` (Python loop + per-call dispatch),
     this is one fused XLA program, so it keeps the GPU launch profile of
     ``_amica_step`` while dropping the recompute.
+
+    ``block_size`` bounds the E-step's ``(n_comp, n_mix, block)`` temporaries,
+    which otherwise scale with the recording and set the peak. It blocks *inside*
+    this graph, so unlike ``_amica_step_chunked`` it costs no extra dispatches.
+    ``block_size=None`` keeps the original full-batch graph exactly.
     """
-    from .accumulators import compute_chunk_stats
+    from .accumulators import accumulate_stats
     from .updates import (
         apply_alpha_update_from_stats,
         apply_beta_update_from_stats,
@@ -673,19 +680,19 @@ def _amica_step_fused(
     n_components = W.shape[0]
     dtype = W.dtype
 
-    # --- E-step: single fused pass over the whole batch ---
-    data_centered = data_white - c[:, None]
+    # --- E-step: one fused pass, blocked over the time axis when asked ---
+    # Centering happens per block inside accumulate_stats, so the centered copy
+    # of the recording is never materialized at full size.
+    totals = accumulate_stats(
+        data_white, c, W, alpha, mu, beta, rho, log_det_sphere, sample_weight, block_size
+    )
     # sample_weight is None on the validated no-rejection path → these branches
     # resolve at trace time and that graph is byte-identical to the original.
     if sample_weight is None:
         n_total = float(n_samples)
-        totals = compute_chunk_stats(data_centered, W, alpha, mu, beta, rho, log_det_sphere)
         data_sum_total = jnp.sum(data_white, axis=1)
     else:
         n_total = jnp.sum(sample_weight)
-        totals = compute_chunk_stats(
-            data_centered, W, alpha, mu, beta, rho, log_det_sphere, sample_weight
-        )
         data_sum_total = jnp.sum(sample_weight * data_white, axis=1)
 
     ll = totals.ll_sum / n_total / n_components
@@ -1190,9 +1197,22 @@ def _choose_chunk_size(
 ) -> int:
     """Return chunk_size that keeps hot-buffer allocation within available memory.
 
-    Hot buffers per chunk: y and g (n_comp x B each) plus per-mixture
-    intermediates (~5 x n_comp x n_mix x B). Formula mirrors scott-huberty's
-    choose_batch_size() adapted for our single-model NumPy/JAX buffers.
+    Hot buffers per chunk: y and g (n_comp x B each) plus the per-mixture
+    intermediates, which are ``n_comp x n_mix x B`` tensors.
+
+    The per-mixture coefficient is measured, not assumed. Compiling the E-step
+    over a grid of (n_comp, n_mix) and reading XLA's own
+    ``memory_analysis().temp_size_in_bytes`` gives 10.0 to 11.3 doubles per
+    ``n_comp x n_mix`` per sample, stable across n_comp; 11 covers the grid
+    without understating it anywhere (predicted/actual 1.02 to 1.31).
+
+    It was previously 5 with a 1.2 fudge factor, which understated the real cost
+    by 1.66x at n_mix=3 -- so a budget meant to cap the hot buffers was overshot
+    by two thirds, and auto-chunking declined to engage on machines where it was
+    needed. The 11 already errs high, so the fudge factor is gone.
+
+    This counts the per-chunk temporaries only. ``data_white`` itself is live for
+    the whole fit and is not part of what a chunk size can bound.
 
     Memory budget source:
       - On GPU (``device='gpu'`` or auto-detected), the budget is derived from
@@ -1207,7 +1227,7 @@ def _choose_chunk_size(
     """
     dtype_size = np.dtype(np.float64 if dtype is None else dtype).itemsize
     bytes_per_sample = int(
-        (1 + 2 * n_components + 5 * n_components * n_mix_comps) * dtype_size * 1.2
+        (1 + 2 * n_components + 11 * n_components * n_mix_comps) * dtype_size
     )
 
     on_gpu = (device == "gpu") or (device is None and _active_device_is_gpu())
@@ -1523,6 +1543,10 @@ class Amica:
             _eff_chunk_size = _cfg_cs
         else:
             _eff_chunk_size = None  # None = full batch
+        # Recorded so a caller can tell what actually ran: "auto" resolving to
+        # full batch and an explicit full batch are very different memory
+        # profiles, and nothing else distinguishes them after the fact.
+        self.effective_chunk_size_ = _eff_chunk_size
 
         # Likelihood rejection passes a per-sample good-mask as the trailing
         # `sample_weight` kwarg; the single-model fused/chunked AND the multimodel
@@ -1537,10 +1561,19 @@ class Amica:
                     return _amica_step_multimodel_chunked(
                         *args, chunk_size=_cs, sample_weight=sample_weight
                     )
-            else:
-                # Chunked single-model path is the fused single-pass accumulator.
+            elif self.config.estep == "classic":
+                # Escape hatch: the eager Python-loop chunked path, kept as the
+                # reference the blocked graph is checked against.
                 def _step_fn(*args, sample_weight=None, _cs=_cs):
                     return _amica_step_chunked(*args, chunk_size=_cs, sample_weight=sample_weight)
+            else:
+                # Chunked single-model path blocks the time axis *inside* the
+                # fused graph. Same blocks and same accumulation order as
+                # _amica_step_chunked -- the sufficient statistics come out
+                # bit-identical -- but one compiled program and one dispatch per
+                # iteration instead of one per block.
+                def _step_fn(*args, sample_weight=None, _cs=_cs):
+                    return _amica_step_fused(*args, block_size=_cs, sample_weight=sample_weight)
         elif _multimodel:
             # Full-batch multi-model: v-weighted per-model E/M-step; a rejection mask
             # is applied globally across models (folded into the per-sample posteriors).
