@@ -111,7 +111,27 @@ def _chunk_stats_one_component(i, y_chunk, alpha, mu, beta, rho, sample_weight=N
         y_scaled = b * (y_i - m)  # (n_chunk,)
         abs_y = jnp.abs(y_scaled)
         sign_y = jnp.where(y_scaled >= 0.0, 1.0, -1.0)
-        fp = r * sign_y * jnp.power(abs_y, r - 1.0)
+
+        # One logarithm serves every power of |y_scaled| this function needs.
+        # Written out, the three quantities below were previously
+        # power(abs_y, r-1), power(abs_y, r) and exp(r*log_abs) -- that is three
+        # logarithms and three exponentials for two distinct results, since
+        # power(x, k) is itself exp(k*log(x)) and the third is algebraically the
+        # second. Sharing the logarithm leaves one log and two exp.
+        #
+        # This is the hot loop: it runs per mixture component per chunk per
+        # iteration, and the CPU path is limited by transcendental throughput
+        # rather than by BLAS or bandwidth (amica/benchmark/profile_cpu.py).
+        #
+        # exp(k*log(max(|y|,1e-300))) reproduces power(|y|, k) on the edge case
+        # too: at |y| exactly zero and rho = 1 (the Laplacian floor, minrho),
+        # k = 0 gives exp(0) = 1, matching 0**0 = 1. Dividing tmpy by |y| to get
+        # the r-1 power would give 0 there instead, which is why that shortcut
+        # is not taken.
+        safe_abs = jnp.maximum(abs_y, 1e-300)
+        log_abs = jnp.log(safe_abs)
+        tmpy = jnp.exp(r * log_abs)  # |y_scaled|^rho
+        fp = r * sign_y * jnp.exp((r - 1.0) * log_abs)
 
         ufp = u * fp
 
@@ -128,12 +148,9 @@ def _chunk_stats_one_component(i, y_chunk, alpha, mu, beta, rho, sample_weight=N
         # beta numer/denom
         u_sum = jnp.sum(u)
         beta_d_le2 = jnp.sum(ufp * y_scaled)
-        beta_d_gt2 = jnp.sum(u * jnp.power(abs_y, r))
+        beta_d_gt2 = jnp.sum(u * tmpy)  # tmpy is |y_scaled|^rho, computed above
 
         # rho numer (denom is u_sum)
-        safe_abs = jnp.maximum(abs_y, 1e-300)
-        log_abs = jnp.log(safe_abs)
-        tmpy = jnp.exp(r * log_abs)  # |y|^rho
         logab = r * log_abs
         rho_n = jnp.sum(u * tmpy * logab)
 
