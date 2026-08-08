@@ -18,9 +18,14 @@ Two things are needed to make the split honest:
 
 * JAX dispatches asynchronously, so a phase boundary in Python time is not a
   boundary in allocation time. Every boundary blocks on the arrays crossing it.
-* Peak RSS is a per-process high-water mark, so phases are attributed from the
-  sampled trace, never from ``peak_wset``, which would credit the whole peak to
-  whichever phase happened to run last.
+* Phases are attributed from the sampled trace, never from ``peak_wset``: a
+  high-water mark only ever rises, so it would credit the whole peak to whichever
+  phase happened to run last.
+
+The high-water mark is still reported alongside, because the trace has the
+opposite weakness -- it cannot see an allocation that lived and died between two
+samples. Attribution comes from the trace; the true peak comes from the mark.
+A large gap between them is itself the finding.
 
 Usage::
 
@@ -33,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import threading
 import time
 
@@ -84,6 +90,31 @@ class RssSampler:
         if not self.samples:
             return float("nan")
         return min(self.samples, key=lambda s: abs(s[0] - t))[1]
+
+
+def peak_rss_gib() -> float:
+    """The OS high-water mark for the process.
+
+    The sampled trace can only see memory that was held across a sample, so a
+    short-lived allocation between two samples is invisible to it. This cannot
+    attribute a peak to a phase, but it does not miss one -- so the two are
+    reported together and a large gap between them means a transient spike.
+    """
+    try:
+        import psutil
+
+        info = psutil.Process().memory_info()
+        if hasattr(info, "peak_wset"):  # Windows
+            return info.peak_wset / 1024**3
+        return info.rss / 1024**3
+    except Exception:
+        try:
+            import resource
+
+            ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            return ru / (1024**3 if platform.system() == "Darwin" else 1024**2)
+        except Exception:
+            return float("nan")
 
 
 def _settle(*arrays) -> None:
@@ -194,6 +225,7 @@ def main() -> int:
         _settle(result.unmixing_matrix_white_)
         t_fit1 = time.perf_counter()
         time.sleep(0.05)
+    high_water = peak_rss_gib()
 
     chunk_used = getattr(model, "effective_chunk_size_", None)
 
@@ -224,6 +256,8 @@ def main() -> int:
     print("-" * 66)
     print(f"{'whole fit':22} {peak_overall:9.3f} {peak_overall - baseline:15.3f} "
           f"{(peak_overall - baseline) / recording_gib:8.2f} {t_fit1 - t_fit0:7.2f}")
+    print(f"{'OS high-water mark':22} {high_water:9.3f}   "
+          f"(sampled trace misses spikes shorter than the 5 ms interval)")
 
     dominant = "preprocessing" if peak_pre >= peak_loop else "the EM loop"
     print(f"\nPeak is set by {dominant}: "
@@ -244,6 +278,7 @@ def main() -> int:
                     "recording_gib": recording_gib,
                     "baseline_gib": baseline,
                     "peak_overall_gib": peak_overall,
+                    "peak_high_water_gib": high_water,
                     "peak_preprocess_gib": peak_pre,
                     "peak_loop_gib": peak_loop,
                     "spans": [
