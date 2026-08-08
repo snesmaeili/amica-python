@@ -1282,9 +1282,20 @@ def _choose_chunk_size(
     if prefer_blocking and not on_gpu:
         # Deliberately below what memory alone would allow: the measurements in
         # _CPU_TARGET_BLOCK say a block this size is both smaller and faster than
-        # whatever the budget would have permitted.
-        chunk = min(chunk, _CPU_TARGET_BLOCK)
-        return chunk
+        # whatever the budget would have permitted. The usual "chunk looks too
+        # small" warning would fire on every such fit, so the meaningful warning
+        # here is the other one: memory so tight that even the target is out of
+        # reach, which the user can actually act on.
+        if chunk < _CPU_TARGET_BLOCK:
+            logger.warning(
+                "Memory budget (%s) allows only %d samples per block, below the "
+                "%d this fit would otherwise use. Close other processes or "
+                "reduce n_components if the fit is slow.",
+                budget_source,
+                chunk,
+                _CPU_TARGET_BLOCK,
+            )
+        return min(chunk, _CPU_TARGET_BLOCK)
 
     min_chunk = min(max(8192, n_components * 32), n_samples)
     if chunk < min_chunk:
