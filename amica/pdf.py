@@ -155,15 +155,23 @@ def compute_responsibilities(
         lambda a, m, b, r: jnp.log(a) + log_generalized_gaussian(y, m, b, r)
     )(alpha, mu, beta, rho)
 
-    # Normalize using log-sum-exp
-    log_total = jax.scipy.special.logsumexp(log_weighted_pdfs, axis=0)
-
-    # Responsibilities in log space, then exponentiate
-    log_responsibilities = log_weighted_pdfs - log_total
+    # Shifted exponentials, computed once. logsumexp would form exactly these
+    # internally and discard them, and the responsibilities would then be
+    # recovered with a second exp over the same (n_mix, n_samples) array:
+    #
+    #     exp(x - log_total) = exp(x - m) / sum_j exp(x_j - m)
+    #
+    # so the second exponential is algebraically redundant. On this workload
+    # that is one of four full transcendental passes per sample, and the density
+    # path is where CPU time goes -- see amica/benchmark/profile_cpu.py.
+    # Dropping the log/exp round-trip is also marginally more accurate, not less.
+    shift = jnp.max(log_weighted_pdfs, axis=0)
+    shifted = jnp.exp(log_weighted_pdfs - shift)
 
     # Fortran adds +1e-15 floor then re-normalizes (amica17.f90:1353-1358)
     # to prevent exactly-zero responsibilities from causing 0/0 downstream.
-    resp = jnp.exp(log_responsibilities) + 1e-15
+    # The floor is applied to the normalized responsibilities, as before.
+    resp = shifted / jnp.sum(shifted, axis=0, keepdims=True) + 1e-15
     return resp / jnp.sum(resp, axis=0, keepdims=True)
 
 
@@ -186,8 +194,18 @@ def compute_responsibilities_with_loglik(
     log_weighted_pdfs = jax.vmap(
         lambda a, m, b, r: jnp.log(a) + log_generalized_gaussian(y, m, b, r)
     )(alpha, mu, beta, rho)
-    log_total = jax.scipy.special.logsumexp(log_weighted_pdfs, axis=0)
-    resp = jnp.exp(log_weighted_pdfs - log_total) + 1e-15
+
+    # One exponential serves both outputs. logsumexp would compute these shifted
+    # exponentials and throw them away, after which the responsibilities need a
+    # second exp over the same array; keeping them gives the normaliser by a
+    # sum and a log over (n_samples,) alone. Same reasoning as
+    # compute_responsibilities, and the same saving.
+    shift = jnp.max(log_weighted_pdfs, axis=0)
+    shifted = jnp.exp(log_weighted_pdfs - shift)
+    denom = jnp.sum(shifted, axis=0)
+    log_total = shift + jnp.log(denom)
+
+    resp = shifted / denom + 1e-15
     resp = resp / jnp.sum(resp, axis=0, keepdims=True)
     return resp, log_total
 
