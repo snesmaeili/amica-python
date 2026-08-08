@@ -1187,6 +1187,24 @@ def _active_device_is_gpu() -> bool:
         return False
 
 
+# Preferred CPU block, in samples. Blocking the time axis is not a memory-for-
+# speed trade on CPU -- it wins on both, because the per-mixture intermediates
+# fit in cache at this size and the whole recording never did. Measured on a
+# 6-core laptop, float64, n_mix=3, against full batch:
+#
+#   n_comp   full batch        block 4096      best block seen
+#       16   1.001 GiB  9.2s   0.329  7.7s     4096
+#       30   1.662 GiB 24.2s   0.368 21.3s     1024  (19.9s)
+#       64   5.706 GiB 17.6s   0.611 14.1s     1024  (13.2s)
+#       71   3.634 GiB 38.2s   0.547 33.6s    16384  (31.2s)
+#
+# No block size wins everywhere and the spread between them is 2-7%, against a
+# 12-25% penalty for not blocking at all, so this picks a middle: within 7% of
+# the best block on speed and 1.14x of it on memory at every shape measured,
+# and better than full batch on both at all of them.
+_CPU_TARGET_BLOCK = 4096
+
+
 def _choose_chunk_size(
     n_samples: int,
     n_components: int,
@@ -1194,6 +1212,7 @@ def _choose_chunk_size(
     dtype: np.dtype[Any] | None = None,
     memory_fraction: float = 0.25,
     device: str | None = None,
+    prefer_blocking: bool = False,
 ) -> int:
     """Return chunk_size that keeps hot-buffer allocation within available memory.
 
@@ -1213,6 +1232,11 @@ def _choose_chunk_size(
 
     This counts the per-chunk temporaries only. ``data_white`` itself is live for
     the whole fit and is not part of what a chunk size can bound.
+
+    ``prefer_blocking`` additionally caps the result at ``_CPU_TARGET_BLOCK`` on
+    CPU, so blocking happens because it is faster and smaller, not only when
+    memory runs short. It is off by default and never applies on GPU, where the
+    block size is a VRAM question and small blocks would cost kernel launches.
 
     Memory budget source:
       - On GPU (``device='gpu'`` or auto-detected), the budget is derived from
@@ -1255,6 +1279,13 @@ def _choose_chunk_size(
         )
 
     chunk = min(n_samples, max_chunk)
+    if prefer_blocking and not on_gpu:
+        # Deliberately below what memory alone would allow: the measurements in
+        # _CPU_TARGET_BLOCK say a block this size is both smaller and faster than
+        # whatever the budget would have permitted.
+        chunk = min(chunk, _CPU_TARGET_BLOCK)
+        return chunk
+
     min_chunk = min(max(8192, n_components * 32), n_samples)
     if chunk < min_chunk:
         logger.warning(
@@ -1529,11 +1560,18 @@ class Amica:
             # Multi-model multiplies the per-sample E-step tensors by num_models;
             # inflate the per-sample cost estimate so auto-chunking sizes against it.
             _eff_nmix = self.config.num_mix_comps * max(1, self.config.num_models)
+            # Only the single-model path blocks inside the compiled graph. The
+            # multi-model chunked step is still an eager Python loop, so for it a
+            # block is a real dispatch cost and is worth paying only under memory
+            # pressure — hence the CPU target applies to single-model alone.
             _eff_chunk_size = _choose_chunk_size(
                 n_samples,
                 n_components,
                 _eff_nmix,
                 dtype=_chunk_dtype,
+                prefer_blocking=(
+                    self.config.num_models == 1 and self.config.estep != "classic"
+                ),
             )
             if _eff_chunk_size >= n_samples:
                 _eff_chunk_size = None  # everything fits — full batch
