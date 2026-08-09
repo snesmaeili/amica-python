@@ -33,6 +33,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -100,7 +101,7 @@ print(f"current  : {CURRENT}\n")
 
 ref = run(BASELINE, {"chunk_size": None}, "baseline")
 
-cases = [
+cases: list[tuple[str, dict[str, Any], bool]] = [
     ("full batch (chunk_size=None)", {"chunk_size": None}, False),
     ("blocked (new default)", {"chunk_size": "auto"}, False),
     ("classic e-step", {"chunk_size": None, "estep": "classic"}, False),

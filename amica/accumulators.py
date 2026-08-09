@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from .backend import jax, jnp
+from .backend import HAS_JAX, jax, jnp
 from .likelihood import compute_log_det_W
 from .pdf import compute_responsibilities_with_loglik
 
@@ -391,13 +391,23 @@ def accumulate_stats(
             data_white - c[:, None], W, alpha, mu, beta, rho, log_det_sphere, sample_weight
         )
 
+    # Under JAX the block offset is a traced value inside fori_loop, so the
+    # slices have to be dynamic. On the NumPy backend the offset is an ordinary
+    # int and plain slicing is both valid and clearer -- and lax.dynamic_slice
+    # is not part of that backend's shim.
+    def _cols(arr, start, size):
+        if HAS_JAX:
+            return jax.lax.dynamic_slice(arr, (0, start), (n_comp, size))
+        return arr[:, start : start + size]
+
+    def _elems(arr, start, size):
+        if HAS_JAX:
+            return jax.lax.dynamic_slice(arr, (start,), (size,))
+        return arr[start : start + size]
+
     def block_stats(start, size):
-        chunk = jax.lax.dynamic_slice(data_white, (0, start), (n_comp, size)) - c[:, None]
-        w = (
-            None
-            if sample_weight is None
-            else jax.lax.dynamic_slice(sample_weight, (start,), (size,))
-        )
+        chunk = _cols(data_white, start, size) - c[:, None]
+        w = None if sample_weight is None else _elems(sample_weight, start, size)
         return compute_chunk_stats(chunk, W, alpha, mu, beta, rho, log_det_sphere, w)
 
     n_full = n_samples // block_size
@@ -409,12 +419,19 @@ def accumulate_stats(
     # dtype-parameterized zero would get wrong in float32 mode. Summing from
     # block 0 is also what zero_stats + block 0 gives, exactly.
     totals = block_stats(0, block_size)
-    totals = jax.lax.fori_loop(
-        1,
-        n_full,
-        lambda k, acc: add_stats(acc, block_stats(k * block_size, block_size)),
-        totals,
-    )
+    if HAS_JAX:
+        totals = jax.lax.fori_loop(
+            1,
+            n_full,
+            lambda k, acc: add_stats(acc, block_stats(k * block_size, block_size)),
+            totals,
+        )
+    else:
+        # No traced graph to stay inside, so a Python loop performs exactly the
+        # same operations in the same order. fori_loop exists to keep the
+        # accumulation in one XLA program; without a program it buys nothing.
+        for k in range(1, n_full):
+            totals = add_stats(totals, block_stats(k * block_size, block_size))
     if tail:
         totals = add_stats(totals, block_stats(n_full * block_size, tail))
     return totals

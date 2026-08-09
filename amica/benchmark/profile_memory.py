@@ -41,6 +41,7 @@ import json
 import platform
 import threading
 import time
+from typing import Literal
 
 import numpy as np
 
@@ -184,6 +185,7 @@ def main() -> int:
     from amica import preprocessing as prep
     from amica import solver as solver_mod
 
+    chunk_size: int | Literal["auto"] | None
     if args.chunk_size == "none":
         chunk_size = None
     elif args.chunk_size == "auto":
