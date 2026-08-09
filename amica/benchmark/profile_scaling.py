@@ -35,18 +35,25 @@ import json
 import numpy as np
 
 
-def steady_ms_per_iter(n_components: int, n_samples: int, n_mix: int,
-                       max_iter: int, chunk_size, seed: int = 0) -> dict:
+def steady_ms_per_iter(
+    n_components: int, n_samples: int, n_mix: int, max_iter: int, chunk_size, seed: int = 0
+) -> dict:
     """Median per-iteration wall time after compilation has been paid."""
     from amica import Amica, AmicaConfig
 
     rng = np.random.default_rng(seed)
     data = rng.normal(size=(n_components, n_components)) @ rng.laplace(
-        size=(n_components, n_samples))
+        size=(n_components, n_samples)
+    )
 
     cfg = AmicaConfig(
-        num_models=1, num_mix_comps=n_mix, max_iter=max_iter,
-        do_sphere=False, do_mean=False, chunk_size=chunk_size, fix_init=True,
+        num_models=1,
+        num_mix_comps=n_mix,
+        max_iter=max_iter,
+        do_sphere=False,
+        do_mean=False,
+        chunk_size=chunk_size,
+        fix_init=True,
     )
     model = Amica(cfg)
     result = model.fit(data)
@@ -73,13 +80,17 @@ def main() -> int:
     ap.add_argument("--n-mix", type=int, default=3)
     ap.add_argument("--max-iter", type=int, default=25)
     ap.add_argument("--chunk-size", default="auto", help="'auto', 'none', or an int")
-    ap.add_argument("--values", default=None,
-                    help="comma-separated sweep values (defaults per axis)")
+    ap.add_argument(
+        "--values", default=None, help="comma-separated sweep values (defaults per axis)"
+    )
     ap.add_argument("--json-out", default=None)
     args = ap.parse_args()
 
-    chunk = None if args.chunk_size == "none" else (
-        "auto" if args.chunk_size == "auto" else int(args.chunk_size))
+    chunk = (
+        None
+        if args.chunk_size == "none"
+        else ("auto" if args.chunk_size == "auto" else int(args.chunk_size))
+    )
 
     if args.values:
         values = [int(v) for v in args.values.split(",")]
@@ -89,16 +100,22 @@ def main() -> int:
         values = [16, 24, 32, 48, 64, 96]
 
     rows = []
-    print(f"axis={args.axis}  n_mix={args.n_mix}  chunk_size={args.chunk_size}  "
-          f"max_iter={args.max_iter}")
+    print(
+        f"axis={args.axis}  n_mix={args.n_mix}  chunk_size={args.chunk_size}  "
+        f"max_iter={args.max_iter}"
+    )
     if args.axis == "samples":
         print(f"fixed n_components={args.n_components}\n")
-        print(f"{'samples':>9} {'ms/iter':>9} {'ns/sample':>11} {'spread':>7} "
-              f"{'block':>7} {'1st iter ms':>12}")
+        print(
+            f"{'samples':>9} {'ms/iter':>9} {'ns/sample':>11} {'spread':>7} "
+            f"{'block':>7} {'1st iter ms':>12}"
+        )
     else:
         print(f"fixed n_samples={args.n_samples}\n")
-        print(f"{'n_comp':>7} {'ms/iter':>9} {'per C':>8} {'per C^2':>9} {'spread':>7} "
-              f"{'block':>7} {'1st iter ms':>12}")
+        print(
+            f"{'n_comp':>7} {'ms/iter':>9} {'per C':>8} {'per C^2':>9} {'spread':>7} "
+            f"{'block':>7} {'1st iter ms':>12}"
+        )
     print("-" * 66)
 
     for v in values:
@@ -107,15 +124,20 @@ def main() -> int:
         r = steady_ms_per_iter(C, T, args.n_mix, args.max_iter, chunk)
         rows.append(r)
         if args.axis == "samples":
-            print(f"{T:9d} {r['steady_ms']:9.2f} {r['steady_ms'] * 1e6 / T:11.1f} "
-                  f"{r['spread_pct']:6.1f}% {str(r['block']):>7} {r['first_iter_ms']:12.0f}")
+            print(
+                f"{T:9d} {r['steady_ms']:9.2f} {r['steady_ms'] * 1e6 / T:11.1f} "
+                f"{r['spread_pct']:6.1f}% {r['block']!s:>7} {r['first_iter_ms']:12.0f}"
+            )
         else:
-            print(f"{C:7d} {r['steady_ms']:9.2f} {r['steady_ms'] / C:8.3f} "
-                  f"{r['steady_ms'] / C ** 2:9.4f} {r['spread_pct']:6.1f}% "
-                  f"{str(r['block']):>7} {r['first_iter_ms']:12.0f}")
+            print(
+                f"{C:7d} {r['steady_ms']:9.2f} {r['steady_ms'] / C:8.3f} "
+                f"{r['steady_ms'] / C**2:9.4f} {r['spread_pct']:6.1f}% "
+                f"{r['block']!s:>7} {r['first_iter_ms']:12.0f}"
+            )
 
-    x = np.array([r["n_samples"] if args.axis == "samples" else r["n_components"]
-                  for r in rows], dtype=float)
+    x = np.array(
+        [r["n_samples"] if args.axis == "samples" else r["n_components"] for r in rows], dtype=float
+    )
     y = np.array([r["steady_ms"] for r in rows])
 
     print()
@@ -124,30 +146,41 @@ def main() -> int:
         # by the sample count is a fair way to compare recordings of different
         # length; if it is not, that normalisation invents a correction.
         per = y / x
-        print(f"cost per sample: {per.min() * 1e6:.0f} to {per.max() * 1e6:.0f} ns "
-              f"({(per.max() / per.min() - 1) * 100:.0f}% spread over a "
-              f"{x.max() / x.min():.0f}x range)")
-        verdict = ("linear -- normalising by sample count is fair"
-                   if (per.max() / per.min() - 1) < 0.15
-                   else "NOT linear -- do not normalise by sample count")
+        print(
+            f"cost per sample: {per.min() * 1e6:.0f} to {per.max() * 1e6:.0f} ns "
+            f"({(per.max() / per.min() - 1) * 100:.0f}% spread over a "
+            f"{x.max() / x.min():.0f}x range)"
+        )
+        verdict = (
+            "linear -- normalising by sample count is fair"
+            if (per.max() / per.min() - 1) < 0.15
+            else "NOT linear -- do not normalise by sample count"
+        )
         print(f"verdict: {verdict}")
     else:
         lin = float(np.sum(x * y) / np.sum(x * x))
         lin_err = float(np.max(np.abs(lin * x - y) / y) * 100)
-        quad, *_ = np.linalg.lstsq(np.vstack([x, x ** 2]).T, y, rcond=None)
-        quad_err = float(np.max(np.abs(np.vstack([x, x ** 2]).T @ quad - y) / y) * 100)
+        quad, *_ = np.linalg.lstsq(np.vstack([x, x**2]).T, y, rcond=None)
+        quad_err = float(np.max(np.abs(np.vstack([x, x**2]).T @ quad - y) / y) * 100)
         print(f"pure-linear  ms/iter = {lin:.4f}*C            worst error {lin_err:.0f}%")
-        print(f"linear+quad  ms/iter = {quad[0]:.4f}*C + {quad[1]:.6f}*C^2  "
-              f"worst error {quad_err:.0f}%")
+        print(
+            f"linear+quad  ms/iter = {quad[0]:.4f}*C + {quad[1]:.6f}*C^2  "
+            f"worst error {quad_err:.0f}%"
+        )
         share = quad[1] * x[-1] ** 2 / (quad[0] * x[-1] + quad[1] * x[-1] ** 2) * 100
         print(f"at C={int(x[-1])} the quadratic (GEMM) term is {share:.0f}% of the cost")
-        print("verdict: " + ("linear enough to normalise by C" if lin_err < 15
-                             else "NOT linear -- match C across platforms, do not divide by it"))
+        print(
+            "verdict: "
+            + (
+                "linear enough to normalise by C"
+                if lin_err < 15
+                else "NOT linear -- match C across platforms, do not divide by it"
+            )
+        )
 
     if args.json_out:
         with open(args.json_out, "w", encoding="utf-8") as f:
-            json.dump({"axis": args.axis, "chunk_size": args.chunk_size, "rows": rows}, f,
-                      indent=2)
+            json.dump({"axis": args.axis, "chunk_size": args.chunk_size, "rows": rows}, f, indent=2)
         print(f"\nwrote {args.json_out}")
     return 0
 
