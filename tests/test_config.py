@@ -15,7 +15,10 @@ def test_default_config_valid():
     assert config.num_models == 1
     assert config.num_mix_comps == 3
     assert config.lrate == 0.01
-    assert config.chunk_size is None
+    # Blocking the E-step's time axis is on by default: on CPU it is both
+    # smaller and faster than full batch, so it is not a trade users should have
+    # to opt into. chunk_size=None still forces the old full-batch behaviour.
+    assert config.chunk_size == "auto"
     assert config.outdir is None
 
 

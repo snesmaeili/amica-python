@@ -383,6 +383,126 @@ def test_chunked_matches_fullbatch_synthetic():
     )
 
 
+def _accum_args(n_comp=8, n_mix=3, n_samples=5000, seed=3):
+    """State for the E-step accumulator: (data, c, W, alpha, mu, beta, rho).
+
+    Arrays come from the package's backend module rather than from ``jax.numpy``
+    directly, so they follow whichever backend the run selected. Importing jax
+    here would hand real JAX arrays to a NumPy-backend fit, which fails in ways
+    that look like bugs in the code under test rather than in the fixture.
+    """
+    from amica.backend import jnp
+
+    rng = np.random.default_rng(seed)
+    return (
+        jnp.asarray(rng.laplace(size=(n_comp, n_samples))),
+        jnp.asarray(rng.normal(size=n_comp) * 0.01),
+        jnp.asarray(np.eye(n_comp) + rng.normal(size=(n_comp, n_comp)) * 0.01),
+        jnp.asarray(np.full((n_mix, n_comp), 1.0 / n_mix)),
+        jnp.asarray(rng.normal(size=(n_mix, n_comp)) * 0.1),
+        jnp.asarray(np.ones((n_mix, n_comp))),
+        jnp.asarray(np.full((n_mix, n_comp), 1.5)),
+    )
+
+
+def test_accumulate_stats_unblocked_matches_direct_call():
+    """block_size=None must reproduce the plain full-batch call exactly.
+
+    This is the default path, so "numerically equivalent" is not the bar --
+    every result produced before blocking existed came through it.
+    """
+    from amica.accumulators import ChunkStats, accumulate_stats, compute_chunk_stats
+
+    data, c, W, alpha, mu, beta, rho = _accum_args()
+    blocked = accumulate_stats(data, c, W, alpha, mu, beta, rho, 0.0, None, None)
+    direct = compute_chunk_stats(data - c[:, None], W, alpha, mu, beta, rho, 0.0, None)
+    for field in ChunkStats._fields:
+        assert np.array_equal(
+            np.asarray(getattr(blocked, field)), np.asarray(getattr(direct, field))
+        ), f"unblocked path changed field {field}"
+
+
+@pytest.mark.parametrize("block_size", [512, 1024, 1667, 2500])
+def test_accumulate_stats_blocked_is_exact(block_size):
+    """Blocking must be a regrouping of the same additions, not an approximation.
+
+    A fori_loop over blocks accumulates the same partial sums in the same order
+    as an explicit Python loop over the same blocks, so the two agree bit-for-bit.
+    Tolerance here would hide a genuine indexing or ordering error -- e.g. a
+    dropped tail block, which is why the sizes include ones that do not divide
+    n_samples evenly.
+    """
+    from amica.accumulators import ChunkStats, accumulate_stats, add_stats, compute_chunk_stats
+
+    data, c, W, alpha, mu, beta, rho = _accum_args()
+    n_samples = data.shape[1]
+
+    reference = None
+    for start in range(0, n_samples, block_size):
+        stats = compute_chunk_stats(
+            data[:, start : min(start + block_size, n_samples)] - c[:, None],
+            W,
+            alpha,
+            mu,
+            beta,
+            rho,
+            0.0,
+            None,
+        )
+        reference = stats if reference is None else add_stats(reference, stats)
+
+    blocked = accumulate_stats(data, c, W, alpha, mu, beta, rho, 0.0, None, block_size)
+    for field in ChunkStats._fields:
+        assert np.array_equal(
+            np.asarray(getattr(blocked, field)), np.asarray(getattr(reference, field))
+        ), f"blocked accumulation differs from the block-wise reference in {field}"
+
+    # The sample count must come out right whether or not the blocks divide evenly.
+    assert float(np.asarray(blocked.n_chunk)) == pytest.approx(float(n_samples))
+
+
+@pytest.mark.skipif(
+    os.environ.get("AMICA_NO_JAX") == "1",
+    reason="reads XLA's compiled memory analysis, which only the JAX backend has",
+)
+def test_choose_chunk_size_does_not_understate_estep_cost():
+    """The per-sample estimate must not be smaller than what the E-step allocates.
+
+    The estimate exists to keep the hot buffers inside a memory budget; if it
+    understates them the budget is silently exceeded, which is what a 5*C*K
+    coefficient did (the compiler reports ~11.3*C*K doubles per sample).
+    """
+    import jax
+
+    from amica.accumulators import compute_chunk_stats
+    from amica.solver import _choose_chunk_size
+
+    n_samples = 4000
+    for n_comp, n_mix in ((8, 1), (8, 3), (16, 3), (16, 5)):
+        data, c, W, alpha, mu, beta, rho = _accum_args(n_comp, n_mix, n_samples)
+        compiled = (
+            jax.jit(compute_chunk_stats)
+            .lower(data - c[:, None], W, alpha, mu, beta, rho, 0.0)
+            .compile()
+        )
+        actual = compiled.memory_analysis().temp_size_in_bytes / n_samples
+
+        # Recover the estimate from a budget chosen to make the arithmetic exact.
+        estimated = 8 * (1 + 2 * n_comp + 11 * n_comp * n_mix)
+        assert estimated >= actual, (
+            f"C={n_comp} K={n_mix}: estimate {estimated:.0f} B/sample understates "
+            f"the measured {actual:.0f} B/sample"
+        )
+        # And it must stay within reach of reality, or chunks get pointlessly small.
+        assert estimated < 2.0 * actual, (
+            f"C={n_comp} K={n_mix}: estimate {estimated:.0f} B/sample is more than "
+            f"twice the measured {actual:.0f} B/sample"
+        )
+
+    # Guard the wiring too: a tiny budget must still produce a usable chunk.
+    assert 1 <= _choose_chunk_size(n_samples, 16, 3) <= n_samples
+
+
 @pytest.fixture
 def tiny_data():
     """Very small data array for fast testing: 4 channels, 20 samples."""

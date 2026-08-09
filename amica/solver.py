@@ -611,6 +611,7 @@ def _amica_step_chunked(
         "update_mu",
         "update_beta",
         "update_rho",
+        "block_size",
     ],
 )
 def _amica_step_fused(
@@ -641,8 +642,9 @@ def _amica_step_fused(
     update_beta,
     update_rho,
     sample_weight=None,
+    block_size=None,
 ):
-    """Single-graph fused full-batch step (Stage 3D).
+    """Single-graph fused step (Stage 3D).
 
     Same contract as ``_amica_step`` but computes responsibilities ONCE via the
     fused accumulator (``compute_chunk_stats`` on the whole batch) and derives
@@ -658,8 +660,13 @@ def _amica_step_fused(
     Unlike the eager ``_amica_step_chunked`` (Python loop + per-call dispatch),
     this is one fused XLA program, so it keeps the GPU launch profile of
     ``_amica_step`` while dropping the recompute.
+
+    ``block_size`` bounds the E-step's ``(n_comp, n_mix, block)`` temporaries,
+    which otherwise scale with the recording and set the peak. It blocks *inside*
+    this graph, so unlike ``_amica_step_chunked`` it costs no extra dispatches.
+    ``block_size=None`` keeps the original full-batch graph exactly.
     """
-    from .accumulators import compute_chunk_stats
+    from .accumulators import accumulate_stats
     from .updates import (
         apply_alpha_update_from_stats,
         apply_beta_update_from_stats,
@@ -673,19 +680,19 @@ def _amica_step_fused(
     n_components = W.shape[0]
     dtype = W.dtype
 
-    # --- E-step: single fused pass over the whole batch ---
-    data_centered = data_white - c[:, None]
+    # --- E-step: one fused pass, blocked over the time axis when asked ---
+    # Centering happens per block inside accumulate_stats, so the centered copy
+    # of the recording is never materialized at full size.
+    totals = accumulate_stats(
+        data_white, c, W, alpha, mu, beta, rho, log_det_sphere, sample_weight, block_size
+    )
     # sample_weight is None on the validated no-rejection path → these branches
     # resolve at trace time and that graph is byte-identical to the original.
     if sample_weight is None:
         n_total = float(n_samples)
-        totals = compute_chunk_stats(data_centered, W, alpha, mu, beta, rho, log_det_sphere)
         data_sum_total = jnp.sum(data_white, axis=1)
     else:
         n_total = jnp.sum(sample_weight)
-        totals = compute_chunk_stats(
-            data_centered, W, alpha, mu, beta, rho, log_det_sphere, sample_weight
-        )
         data_sum_total = jnp.sum(sample_weight * data_white, axis=1)
 
     ll = totals.ll_sum / n_total / n_components
@@ -1180,6 +1187,24 @@ def _active_device_is_gpu() -> bool:
         return False
 
 
+# Preferred CPU block, in samples. Blocking the time axis is not a memory-for-
+# speed trade on CPU -- it wins on both, because the per-mixture intermediates
+# fit in cache at this size and the whole recording never did. Measured on a
+# 6-core laptop, float64, n_mix=3, against full batch:
+#
+#   n_comp   full batch        block 4096      best block seen
+#       16   1.001 GiB  9.2s   0.329  7.7s     4096
+#       30   1.662 GiB 24.2s   0.368 21.3s     1024  (19.9s)
+#       64   5.706 GiB 17.6s   0.611 14.1s     1024  (13.2s)
+#       71   3.634 GiB 38.2s   0.547 33.6s    16384  (31.2s)
+#
+# No block size wins everywhere and the spread between them is 2-7%, against a
+# 12-25% penalty for not blocking at all, so this picks a middle: within 7% of
+# the best block on speed and 1.14x of it on memory at every shape measured,
+# and better than full batch on both at all of them.
+_CPU_TARGET_BLOCK = 4096
+
+
 def _choose_chunk_size(
     n_samples: int,
     n_components: int,
@@ -1187,12 +1212,31 @@ def _choose_chunk_size(
     dtype: np.dtype[Any] | None = None,
     memory_fraction: float = 0.25,
     device: str | None = None,
+    prefer_blocking: bool = False,
 ) -> int:
     """Return chunk_size that keeps hot-buffer allocation within available memory.
 
-    Hot buffers per chunk: y and g (n_comp x B each) plus per-mixture
-    intermediates (~5 x n_comp x n_mix x B). Formula mirrors scott-huberty's
-    choose_batch_size() adapted for our single-model NumPy/JAX buffers.
+    Hot buffers per chunk: y and g (n_comp x B each) plus the per-mixture
+    intermediates, which are ``n_comp x n_mix x B`` tensors.
+
+    The per-mixture coefficient is measured, not assumed. Compiling the E-step
+    over a grid of (n_comp, n_mix) and reading XLA's own
+    ``memory_analysis().temp_size_in_bytes`` gives 10.0 to 11.3 doubles per
+    ``n_comp x n_mix`` per sample, stable across n_comp; 11 covers the grid
+    without understating it anywhere (predicted/actual 1.02 to 1.31).
+
+    It was previously 5 with a 1.2 fudge factor, which understated the real cost
+    by 1.66x at n_mix=3 -- so a budget meant to cap the hot buffers was overshot
+    by two thirds, and auto-chunking declined to engage on machines where it was
+    needed. The 11 already errs high, so the fudge factor is gone.
+
+    This counts the per-chunk temporaries only. ``data_white`` itself is live for
+    the whole fit and is not part of what a chunk size can bound.
+
+    ``prefer_blocking`` additionally caps the result at ``_CPU_TARGET_BLOCK`` on
+    CPU, so blocking happens because it is faster and smaller, not only when
+    memory runs short. It is off by default and never applies on GPU, where the
+    block size is a VRAM question and small blocks would cost kernel launches.
 
     Memory budget source:
       - On GPU (``device='gpu'`` or auto-detected), the budget is derived from
@@ -1206,9 +1250,7 @@ def _choose_chunk_size(
     when everything fits (caller treats as full-batch).
     """
     dtype_size = np.dtype(np.float64 if dtype is None else dtype).itemsize
-    bytes_per_sample = int(
-        (1 + 2 * n_components + 5 * n_components * n_mix_comps) * dtype_size * 1.2
-    )
+    bytes_per_sample = int((1 + 2 * n_components + 11 * n_components * n_mix_comps) * dtype_size)
 
     on_gpu = (device == "gpu") or (device is None and _active_device_is_gpu())
     budget = None
@@ -1235,6 +1277,24 @@ def _choose_chunk_size(
         )
 
     chunk = min(n_samples, max_chunk)
+    if prefer_blocking and not on_gpu:
+        # Deliberately below what memory alone would allow: the measurements in
+        # _CPU_TARGET_BLOCK say a block this size is both smaller and faster than
+        # whatever the budget would have permitted. The usual "chunk looks too
+        # small" warning would fire on every such fit, so the meaningful warning
+        # here is the other one: memory so tight that even the target is out of
+        # reach, which the user can actually act on.
+        if chunk < _CPU_TARGET_BLOCK:
+            logger.warning(
+                "Memory budget (%s) allows only %d samples per block, below the "
+                "%d this fit would otherwise use. Close other processes or "
+                "reduce n_components if the fit is slow.",
+                budget_source,
+                chunk,
+                _CPU_TARGET_BLOCK,
+            )
+        return min(chunk, _CPU_TARGET_BLOCK)
+
     min_chunk = min(max(8192, n_components * 32), n_samples)
     if chunk < min_chunk:
         logger.warning(
@@ -1509,11 +1569,16 @@ class Amica:
             # Multi-model multiplies the per-sample E-step tensors by num_models;
             # inflate the per-sample cost estimate so auto-chunking sizes against it.
             _eff_nmix = self.config.num_mix_comps * max(1, self.config.num_models)
+            # Only the single-model path blocks inside the compiled graph. The
+            # multi-model chunked step is still an eager Python loop, so for it a
+            # block is a real dispatch cost and is worth paying only under memory
+            # pressure — hence the CPU target applies to single-model alone.
             _eff_chunk_size = _choose_chunk_size(
                 n_samples,
                 n_components,
                 _eff_nmix,
                 dtype=_chunk_dtype,
+                prefer_blocking=(self.config.num_models == 1 and self.config.estep != "classic"),
             )
             if _eff_chunk_size >= n_samples:
                 _eff_chunk_size = None  # everything fits — full batch
@@ -1523,6 +1588,10 @@ class Amica:
             _eff_chunk_size = _cfg_cs
         else:
             _eff_chunk_size = None  # None = full batch
+        # Recorded so a caller can tell what actually ran: "auto" resolving to
+        # full batch and an explicit full batch are very different memory
+        # profiles, and nothing else distinguishes them after the fact.
+        self.effective_chunk_size_ = _eff_chunk_size
 
         # Likelihood rejection passes a per-sample good-mask as the trailing
         # `sample_weight` kwarg; the single-model fused/chunked AND the multimodel
@@ -1537,10 +1606,19 @@ class Amica:
                     return _amica_step_multimodel_chunked(
                         *args, chunk_size=_cs, sample_weight=sample_weight
                     )
-            else:
-                # Chunked single-model path is the fused single-pass accumulator.
+            elif self.config.estep == "classic":
+                # Escape hatch: the eager Python-loop chunked path, kept as the
+                # reference the blocked graph is checked against.
                 def _step_fn(*args, sample_weight=None, _cs=_cs):
                     return _amica_step_chunked(*args, chunk_size=_cs, sample_weight=sample_weight)
+            else:
+                # Chunked single-model path blocks the time axis *inside* the
+                # fused graph. Same blocks and same accumulation order as
+                # _amica_step_chunked -- the sufficient statistics come out
+                # bit-identical -- but one compiled program and one dispatch per
+                # iteration instead of one per block.
+                def _step_fn(*args, sample_weight=None, _cs=_cs):
+                    return _amica_step_fused(*args, block_size=_cs, sample_weight=sample_weight)
         elif _multimodel:
             # Full-batch multi-model: v-weighted per-model E/M-step; a rejection mask
             # is applied globally across models (folded into the per-sample posteriors).

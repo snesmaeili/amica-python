@@ -62,12 +62,21 @@ viz = [
 ]
 
 test = [
+  # The suite imports these, so they belong here rather than in the feature
+  # extras alone. Without jax the tests silently exercise the NumPy fallback
+  # instead of the backend being shipped, and tests/test_viz.py imports
+  # matplotlib at module scope, so its absence is a collection error that stops
+  # the whole run -- which is what `pip install -e ".[dev]"` followed by
+  # `pytest`, exactly as CONTRIBUTING.md documents it, used to produce.
+  "amica[jax,viz]",
   "pytest>=8.0",
   "pytest-cov",
   "pytest-xdist",
   "pytest-timeout",
   "pandas>=2.0",
   "scikit-learn>=1.0",
+  # Two memory tests in test_amica.py skip without it, quietly.
+  "psutil",
   "python-picard",
 ]
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from .backend import jax, jnp
+from .backend import HAS_JAX, jax, jnp
 from .likelihood import compute_log_det_W
 from .pdf import compute_responsibilities_with_loglik
 
@@ -111,7 +111,27 @@ def _chunk_stats_one_component(i, y_chunk, alpha, mu, beta, rho, sample_weight=N
         y_scaled = b * (y_i - m)  # (n_chunk,)
         abs_y = jnp.abs(y_scaled)
         sign_y = jnp.where(y_scaled >= 0.0, 1.0, -1.0)
-        fp = r * sign_y * jnp.power(abs_y, r - 1.0)
+
+        # One logarithm serves every power of |y_scaled| this function needs.
+        # Written out, the three quantities below were previously
+        # power(abs_y, r-1), power(abs_y, r) and exp(r*log_abs) -- that is three
+        # logarithms and three exponentials for two distinct results, since
+        # power(x, k) is itself exp(k*log(x)) and the third is algebraically the
+        # second. Sharing the logarithm leaves one log and two exp.
+        #
+        # This is the hot loop: it runs per mixture component per chunk per
+        # iteration, and the CPU path is limited by transcendental throughput
+        # rather than by BLAS or bandwidth (amica/benchmark/profile_cpu.py).
+        #
+        # exp(k*log(max(|y|,1e-300))) reproduces power(|y|, k) on the edge case
+        # too: at |y| exactly zero and rho = 1 (the Laplacian floor, minrho),
+        # k = 0 gives exp(0) = 1, matching 0**0 = 1. Dividing tmpy by |y| to get
+        # the r-1 power would give 0 there instead, which is why that shortcut
+        # is not taken.
+        safe_abs = jnp.maximum(abs_y, 1e-300)
+        log_abs = jnp.log(safe_abs)
+        tmpy = jnp.exp(r * log_abs)  # |y_scaled|^rho
+        fp = r * sign_y * jnp.exp((r - 1.0) * log_abs)
 
         ufp = u * fp
 
@@ -128,12 +148,9 @@ def _chunk_stats_one_component(i, y_chunk, alpha, mu, beta, rho, sample_weight=N
         # beta numer/denom
         u_sum = jnp.sum(u)
         beta_d_le2 = jnp.sum(ufp * y_scaled)
-        beta_d_gt2 = jnp.sum(u * jnp.power(abs_y, r))
+        beta_d_gt2 = jnp.sum(u * tmpy)  # tmpy is |y_scaled|^rho, computed above
 
         # rho numer (denom is u_sum)
-        safe_abs = jnp.maximum(abs_y, 1e-300)
-        log_abs = jnp.log(safe_abs)
-        tmpy = jnp.exp(r * log_abs)  # |y|^rho
         logab = r * log_abs
         rho_n = jnp.sum(u * tmpy * logab)
 
@@ -315,3 +332,106 @@ def add_stats(a: ChunkStats, b: ChunkStats) -> ChunkStats:
         The element-wise sum of `a` and `b`.
     """
     return ChunkStats(*(getattr(a, f) + getattr(b, f) for f in ChunkStats._fields))
+
+
+def accumulate_stats(
+    data_white: jnp.ndarray,
+    c: jnp.ndarray,
+    W: jnp.ndarray,
+    alpha: jnp.ndarray,
+    mu: jnp.ndarray,
+    beta: jnp.ndarray,
+    rho: jnp.ndarray,
+    log_det_sphere: float,
+    sample_weight: jnp.ndarray | None = None,
+    block_size: int | None = None,
+) -> ChunkStats:
+    """Accumulate the E-step statistics, optionally blocking the time axis.
+
+    The E-step's temporaries are ``(n_comp, n_mix, n_chunk)`` tensors -- measured
+    at 8160 bytes per sample for ``n_comp=30, n_mix=3``, or about eleven such
+    tensors live at once -- so at full batch they scale with the *recording* and
+    dominate the peak. ``block_size`` bounds them by the block instead, which is
+    what makes peak memory independent of recording length.
+
+    The loop is a ``fori_loop`` rather than a Python loop so the whole
+    accumulation stays inside the caller's traced graph: one compiled program and
+    one dispatch per iteration, instead of one per block. ``_amica_step_chunked``
+    pays that per-block dispatch; this does not.
+
+    ``block_size=None`` (or a block at least as large as the recording) takes the
+    unblocked path, whose graph is unchanged from the original full-batch call --
+    so the default remains bit-for-bit what it was.
+
+    With a block size, the partial sums are formed over the same blocks in the
+    same order as ``_amica_step_chunked`` at the same ``chunk_size``, so the two
+    agree bit-for-bit rather than merely to tolerance. Against *full batch* the
+    sums are reordered, so they agree only to float64 rounding (~1e-13 relative).
+
+    Parameters
+    ----------
+    data_white : jnp.ndarray, shape (n_comp, n_samples)
+        Whitened data. Centering by ``c`` happens per block, so the centered copy
+        is never materialized at full size.
+    c : jnp.ndarray, shape (n_comp,)
+        Per-component offset subtracted from the data before the E-step.
+    block_size : int or None
+        Samples per block. None or >= n_samples means a single unblocked pass.
+
+    Returns
+    -------
+    totals : ChunkStats
+        Sufficient statistics summed over the whole recording.
+    """
+    n_samples = data_white.shape[1]
+    n_comp = W.shape[0]
+
+    if block_size is None or block_size >= n_samples:
+        return compute_chunk_stats(
+            data_white - c[:, None], W, alpha, mu, beta, rho, log_det_sphere, sample_weight
+        )
+
+    # Under JAX the block offset is a traced value inside fori_loop, so the
+    # slices have to be dynamic. On the NumPy backend the offset is an ordinary
+    # int and plain slicing is both valid and clearer -- and lax.dynamic_slice
+    # is not part of that backend's shim.
+    def _cols(arr, start, size):
+        if HAS_JAX:
+            return jax.lax.dynamic_slice(arr, (0, start), (n_comp, size))
+        return arr[:, start : start + size]
+
+    def _elems(arr, start, size):
+        if HAS_JAX:
+            return jax.lax.dynamic_slice(arr, (start,), (size,))
+        return arr[start : start + size]
+
+    def block_stats(start, size):
+        chunk = _cols(data_white, start, size) - c[:, None]
+        w = None if sample_weight is None else _elems(sample_weight, start, size)
+        return compute_chunk_stats(chunk, W, alpha, mu, beta, rho, log_det_sphere, w)
+
+    n_full = n_samples // block_size
+    tail = n_samples - n_full * block_size
+
+    # Seed the carry with a real block rather than zero_stats: fori_loop requires
+    # the carry to match the body's output exactly, and some ChunkStats fields
+    # (ll_sum, n_chunk) are float64 regardless of the compute dtype, which a
+    # dtype-parameterized zero would get wrong in float32 mode. Summing from
+    # block 0 is also what zero_stats + block 0 gives, exactly.
+    totals = block_stats(0, block_size)
+    if HAS_JAX:
+        totals = jax.lax.fori_loop(
+            1,
+            n_full,
+            lambda k, acc: add_stats(acc, block_stats(k * block_size, block_size)),
+            totals,
+        )
+    else:
+        # No traced graph to stay inside, so a Python loop performs exactly the
+        # same operations in the same order. fori_loop exists to keep the
+        # accumulation in one XLA program; without a program it buys nothing.
+        for k in range(1, n_full):
+            totals = add_stats(totals, block_stats(k * block_size, block_size))
+    if tail:
+        totals = add_stats(totals, block_stats(n_full * block_size, tail))
+    return totals

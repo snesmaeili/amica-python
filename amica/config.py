@@ -170,12 +170,16 @@ class AmicaConfig:
     update_beta: bool = True
     update_rho: bool = True
 
-    # Time-axis chunking for the E-step accumulator.
-    #   None     — full-batch (default; preserves existing behaviour)
-    #   "auto"   — use psutil (~25% of available *system* RAM). Does NOT account for
-    #              GPU VRAM — use an explicit int when running on GPU to avoid OOM.
-    #   int >= 1 — explicit chunk size in samples
-    chunk_size: int | Literal["auto"] | None = None
+    # Time-axis blocking for the E-step accumulator.
+    #   "auto"   — default. Single-model CPU fits block at a size measured to be
+    #              both smaller and faster than full batch (see _CPU_TARGET_BLOCK
+    #              in solver.py); everything else blocks only under memory
+    #              pressure, sized against VRAM on GPU and system RAM on CPU.
+    #   None     — force full batch. The pre-0.2 default; keep it to reproduce
+    #              results generated before blocking existed, since regrouping the
+    #              sums changes the last few digits (~5e-10 relative per step).
+    #   int >= 1 — explicit block size in samples
+    chunk_size: int | Literal["auto"] | None = "auto"
 
     # Full-batch E-step implementation (advanced; most users should leave "auto"):
     #   "auto"    — use the fused single-pass step (one responsibility pass per

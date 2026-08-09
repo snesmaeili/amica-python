@@ -45,6 +45,19 @@ Using uv:
 uv pip install -e ".[dev]"
 ```
 
+`[dev]` pulls `[test]`, which brings JAX and the plotting stack, so `pytest`
+runs the suite against the shipped backend.
+
+The MNE-Python integration tests skip themselves when MNE is absent, so a plain
+`[dev]` install reports a clean run while leaving roughly twenty of them
+unexecuted. Since that integration is a headline feature, install those extras
+before trusting a green suite on changes that could touch it:
+
+```bash
+pip install -e ".[dev,mne,icalabel]"
+pytest --run-slow
+```
+
 ## 4. Install Pre-commit Hooks
 
 ```bash
