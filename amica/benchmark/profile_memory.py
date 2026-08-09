@@ -37,6 +37,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import platform
 import threading
@@ -120,10 +121,10 @@ def _settle(*arrays) -> None:
     """Force pending JAX work, so a Python-time boundary is an allocation-time
     boundary. Without this the covariance's buffers can be charged to the fit."""
     for a in arrays:
-        try:
+        # Not every object crossing a phase boundary is a JAX array; the ones
+        # that are not have nothing pending to wait on.
+        with contextlib.suppress(AttributeError):
             a.block_until_ready()
-        except AttributeError:
-            pass
 
 
 class PhaseLog:
@@ -229,7 +230,7 @@ def main() -> int:
 
     chunk_used = getattr(model, "effective_chunk_size_", None)
 
-    spans = dict((n, (a, b)) for n, a, b in phases.spans)
+    spans = {n: (a, b) for n, a, b in phases.spans}
     pre = spans.get("preprocess", (t_fit0, t_fit0))
     peak_overall = sampler.peak_between(t_base, t_fit1)
     peak_pre = sampler.peak_between(*pre)

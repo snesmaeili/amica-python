@@ -384,8 +384,14 @@ def test_chunked_matches_fullbatch_synthetic():
 
 
 def _accum_args(n_comp=8, n_mix=3, n_samples=5000, seed=3):
-    """State for the E-step accumulator: (data, c, W, alpha, mu, beta, rho)."""
-    import jax.numpy as jnp
+    """State for the E-step accumulator: (data, c, W, alpha, mu, beta, rho).
+
+    Arrays come from the package's backend module rather than from ``jax.numpy``
+    directly, so they follow whichever backend the run selected. Importing jax
+    here would hand real JAX arrays to a NumPy-backend fit, which fails in ways
+    that look like bugs in the code under test rather than in the fixture.
+    """
+    from amica.backend import jnp
 
     rng = np.random.default_rng(seed)
     return (
@@ -455,6 +461,10 @@ def test_accumulate_stats_blocked_is_exact(block_size):
     assert float(np.asarray(blocked.n_chunk)) == pytest.approx(float(n_samples))
 
 
+@pytest.mark.skipif(
+    os.environ.get("AMICA_NO_JAX") == "1",
+    reason="reads XLA's compiled memory analysis, which only the JAX backend has",
+)
 def test_choose_chunk_size_does_not_understate_estep_cost():
     """The per-sample estimate must not be smaller than what the E-step allocates.
 

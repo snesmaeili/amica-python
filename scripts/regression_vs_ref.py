@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 SCRATCH = Path(
     "C:/Users/s/AppData/Local/Temp/claude/"
@@ -125,7 +126,6 @@ print()
 # The row-correlation is the number that matters: it is the metric the
 # manuscript compares implementations with, so it is the one that says whether
 # the decomposition changed rather than merely its last bits.
-from scipy.optimize import linear_sum_assignment
 
 print()
 print(f"{'configuration':32} {'worst matched |r|':>18} {'final log-likelihood':>22}")
