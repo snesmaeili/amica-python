@@ -435,7 +435,13 @@ def test_accumulate_stats_blocked_is_exact(block_size):
     for start in range(0, n_samples, block_size):
         stats = compute_chunk_stats(
             data[:, start : min(start + block_size, n_samples)] - c[:, None],
-            W, alpha, mu, beta, rho, 0.0, None,
+            W,
+            alpha,
+            mu,
+            beta,
+            rho,
+            0.0,
+            None,
         )
         reference = stats if reference is None else add_stats(reference, stats)
 
@@ -464,9 +470,11 @@ def test_choose_chunk_size_does_not_understate_estep_cost():
     n_samples = 4000
     for n_comp, n_mix in ((8, 1), (8, 3), (16, 3), (16, 5)):
         data, c, W, alpha, mu, beta, rho = _accum_args(n_comp, n_mix, n_samples)
-        compiled = jax.jit(compute_chunk_stats).lower(
-            data - c[:, None], W, alpha, mu, beta, rho, 0.0
-        ).compile()
+        compiled = (
+            jax.jit(compute_chunk_stats)
+            .lower(data - c[:, None], W, alpha, mu, beta, rho, 0.0)
+            .compile()
+        )
         actual = compiled.memory_analysis().temp_size_in_bytes / n_samples
 
         # Recover the estimate from a budget chosen to make the arithmetic exact.

@@ -99,8 +99,7 @@ def hlo_op_profile(compiled) -> dict[str, Any]:
         return {"available": False, "reason": str(exc)}
 
     # e.g. "%exponential.3 = f64[64,3,785328]{2,1,0} exponential(...)"
-    pattern = re.compile(
-        r"=\s*\w+\[([\d,]*)\][^=]*?\s(\w+)\(", re.MULTILINE)
+    pattern = re.compile(r"=\s*\w+\[([\d,]*)\][^=]*?\s(\w+)\(", re.MULTILINE)
     counts: dict[str, int] = {}
     elements: dict[str, float] = {}
     for dims, op in pattern.findall(text):
@@ -113,8 +112,7 @@ def hlo_op_profile(compiled) -> dict[str, Any]:
         counts[base] = counts.get(base, 0) + 1
         elements[base] = elements.get(base, 0.0) + n
 
-    trans = {k: v for k, v in elements.items()
-             if any(t in k for t in TRANSCENDENTAL)}
+    trans = {k: v for k, v in elements.items() if any(t in k for t in TRANSCENDENTAL)}
     dense = {k: v for k, v in elements.items() if any(d in k for d in DENSE)}
     return {
         "available": True,
@@ -134,8 +132,7 @@ def main() -> int:
     ap.add_argument("--repeats", type=int, default=7)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--dtype", choices=["float64", "float32"], default="float64")
-    ap.add_argument("--json", type=str, default=None,
-                    help="also write the measurements here")
+    ap.add_argument("--json", type=str, default=None, help="also write the measurements here")
     args = ap.parse_args()
 
     import jax
@@ -191,8 +188,7 @@ def main() -> int:
         print(f"  bytes accessed             : {_fmt(bytes_accessed)}")
         if bytes_accessed:
             print(f"  arithmetic intensity       : {flops / bytes_accessed:8.2f} flop/byte")
-        print(f"  implied bandwidth at measured time : "
-              f"{_fmt(bytes_accessed / t_resp)}B/s")
+        print(f"  implied bandwidth at measured time : {_fmt(bytes_accessed / t_resp)}B/s")
     else:
         print(f"  unavailable: {cost}")
     print()
@@ -210,18 +206,27 @@ def main() -> int:
         print(f"  unavailable: {hlo.get('reason')}")
     print()
 
-    verdict = ("transcendental-dominated" if ratio > 3
-               else "mixed" if ratio > 1
-               else "dense-product-dominated")
+    verdict = (
+        "transcendental-dominated"
+        if ratio > 3
+        else "mixed"
+        if ratio > 1
+        else "dense-product-dominated"
+    )
     print(f"=== verdict: {verdict} ===")
-    print("  The density path is the target for fusion or a hand-written kernel"
-          if ratio > 3 else
-          "  A faster BLAS or better blocking matters more than fusing the density")
+    print(
+        "  The density path is the target for fusion or a hand-written kernel"
+        if ratio > 3
+        else "  A faster BLAS or better blocking matters more than fusing the density"
+    )
 
     out = {
         "platform": platform.processor(),
         "jax_backend": jax.default_backend(),
-        "n_components": C, "n_samples": T, "n_mix": K, "dtype": args.dtype,
+        "n_components": C,
+        "n_samples": T,
+        "n_mix": K,
+        "dtype": args.dtype,
         "t_responsibilities_s": t_resp,
         "t_source_projection_s": t_proj,
         "density_over_dense_ratio": ratio,

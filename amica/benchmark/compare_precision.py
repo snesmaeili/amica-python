@@ -147,8 +147,7 @@ def main() -> int:
     from pathlib import Path
 
     print(f"platform : {platform.processor() or platform.machine()}")
-    print(f"fixture  : C={args.n_components} T={args.n_samples:,} "
-          f"iterations={args.max_iter}")
+    print(f"fixture  : C={args.n_components} T={args.n_samples:,} iterations={args.max_iter}")
     print()
 
     tmp = Path(tempfile.mkdtemp(prefix="amica_prec_"))
@@ -157,20 +156,39 @@ def main() -> int:
         print(f"fitting {dtype} ...", flush=True)
         w_out, r_out = tmp / f"W_{dtype}.npy", tmp / f"r_{dtype}.json"
         cp = subprocess.run(
-            [sys.executable, "-m", "amica.benchmark.compare_precision",
-             "--single", dtype, "--n-components", str(args.n_components),
-             "--n-samples", str(args.n_samples), "--max-iter", str(args.max_iter),
-             "--seed", str(args.seed), "--w-out", str(w_out),
-             "--result-out", str(r_out)],
-            capture_output=True, text=True, timeout=36000)
+            [
+                sys.executable,
+                "-m",
+                "amica.benchmark.compare_precision",
+                "--single",
+                dtype,
+                "--n-components",
+                str(args.n_components),
+                "--n-samples",
+                str(args.n_samples),
+                "--max-iter",
+                str(args.max_iter),
+                "--seed",
+                str(args.seed),
+                "--w-out",
+                str(w_out),
+                "--result-out",
+                str(r_out),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=36000,
+        )
         if cp.returncode != 0:
             print(cp.stderr[-2000:])
             raise SystemExit(f"{dtype} fit failed with exit {cp.returncode}")
         r = json.loads(r_out.read_text())
         r["W"] = np.load(w_out)
         runs[dtype] = r
-        print(f"  {r['fit_time_s']:8.1f} s   peak {r['peak_rss_gib']:5.2f} GiB   "
-              f"ll {r['ll_final']:.8f}")
+        print(
+            f"  {r['fit_time_s']:8.1f} s   peak {r['peak_rss_gib']:5.2f} GiB   "
+            f"ll {r['ll_final']:.8f}"
+        )
 
     f64, f32 = runs["float64"], runs["float32"]
     speedup = f64["fit_time_s"] / f32["fit_time_s"] if f32["fit_time_s"] else float("nan")
@@ -180,8 +198,10 @@ def main() -> int:
     print()
     print("=== float32 against float64 ===")
     print(f"  speedup                      : {speedup:6.2f}x")
-    print(f"  peak memory                  : {f32['peak_rss_gib']:.2f} vs "
-          f"{f64['peak_rss_gib']:.2f} GiB")
+    print(
+        f"  peak memory                  : {f32['peak_rss_gib']:.2f} vs "
+        f"{f64['peak_rss_gib']:.2f} GiB"
+    )
     print(f"  |delta final log-likelihood| : {dll:.3e}")
     print(f"  worst matched row |r|        : {agreement:.4f}")
     print()
@@ -195,13 +215,15 @@ def main() -> int:
         print("  Materially different decomposition. The speedup is not free here.")
 
     if args.json:
-        out = {k: {kk: vv for kk, vv in v.items() if kk != "W"}
-               for k, v in runs.items()}
+        out = {k: {kk: vv for kk, vv in v.items() if kk != "W"} for k, v in runs.items()}
         out["comparison"] = {
-            "speedup": speedup, "worst_matched_r": agreement,
+            "speedup": speedup,
+            "worst_matched_r": agreement,
             "abs_delta_ll": dll,
-            "n_components": args.n_components, "n_samples": args.n_samples,
-            "max_iter": args.max_iter, "platform": platform.processor(),
+            "n_components": args.n_components,
+            "n_samples": args.n_samples,
+            "max_iter": args.max_iter,
+            "platform": platform.processor(),
         }
         with open(args.json, "w", encoding="utf-8") as f:
             json.dump(out, f, indent=2, default=str)

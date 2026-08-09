@@ -64,9 +64,7 @@ class RssSampler:
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
-                self.samples.append(
-                    (time.perf_counter(), self._proc.memory_info().rss / 1024**3)
-                )
+                self.samples.append((time.perf_counter(), self._proc.memory_info().rss / 1024**3))
             except Exception:
                 break
             self._stop.wait(self._interval)
@@ -235,34 +233,50 @@ def main() -> int:
     peak_pre = sampler.peak_between(*pre)
     peak_loop = sampler.peak_between(pre[1], t_fit1)
 
-    print(f"\n{args.preset} preset: {args.n_channels} ch x {args.n_samples} samples, "
-          f"n_mix={args.n_mix}, {args.max_iter} iters, chunk_size={args.chunk_size}")
+    print(
+        f"\n{args.preset} preset: {args.n_channels} ch x {args.n_samples} samples, "
+        f"n_mix={args.n_mix}, {args.max_iter} iters, chunk_size={args.chunk_size}"
+    )
     print(f"one float64 copy of the recording : {recording_gib:.3f} GiB")
-    print(f"blocking engaged                  : "
-          f"{'no (full batch)' if chunk_used is None else f'{chunk_used} samples/block'}")
+    print(
+        f"blocking engaged                  : "
+        f"{'no (full batch)' if chunk_used is None else f'{chunk_used} samples/block'}"
+    )
     print()
     print(f"{'phase':22} {'peak GiB':>9} {'above baseline':>15} {'copies':>8} {'s':>7}")
     print("-" * 66)
     print(f"{'baseline (imports)':22} {baseline:9.3f} {'':>15} {'':>8}")
-    print(f"{'data allocated':22} {sampler.at(t_loaded):9.3f} "
-          f"{sampler.at(t_loaded) - baseline:15.3f} "
-          f"{(sampler.at(t_loaded) - baseline) / recording_gib:8.2f}")
+    print(
+        f"{'data allocated':22} {sampler.at(t_loaded):9.3f} "
+        f"{sampler.at(t_loaded) - baseline:15.3f} "
+        f"{(sampler.at(t_loaded) - baseline) / recording_gib:8.2f}"
+    )
     for name, a, b in phases.spans:
         pk = sampler.peak_between(a, b)
-        print(f"{name:22} {pk:9.3f} {pk - baseline:15.3f} "
-              f"{(pk - baseline) / recording_gib:8.2f} {b - a:7.2f}")
-    print(f"{'EM loop':22} {peak_loop:9.3f} {peak_loop - baseline:15.3f} "
-          f"{(peak_loop - baseline) / recording_gib:8.2f} {t_fit1 - pre[1]:7.2f}")
+        print(
+            f"{name:22} {pk:9.3f} {pk - baseline:15.3f} "
+            f"{(pk - baseline) / recording_gib:8.2f} {b - a:7.2f}"
+        )
+    print(
+        f"{'EM loop':22} {peak_loop:9.3f} {peak_loop - baseline:15.3f} "
+        f"{(peak_loop - baseline) / recording_gib:8.2f} {t_fit1 - pre[1]:7.2f}"
+    )
     print("-" * 66)
-    print(f"{'whole fit':22} {peak_overall:9.3f} {peak_overall - baseline:15.3f} "
-          f"{(peak_overall - baseline) / recording_gib:8.2f} {t_fit1 - t_fit0:7.2f}")
-    print(f"{'OS high-water mark':22} {high_water:9.3f}   "
-          f"(sampled trace misses spikes shorter than the 5 ms interval)")
+    print(
+        f"{'whole fit':22} {peak_overall:9.3f} {peak_overall - baseline:15.3f} "
+        f"{(peak_overall - baseline) / recording_gib:8.2f} {t_fit1 - t_fit0:7.2f}"
+    )
+    print(
+        f"{'OS high-water mark':22} {high_water:9.3f}   "
+        f"(sampled trace misses spikes shorter than the 5 ms interval)"
+    )
 
     dominant = "preprocessing" if peak_pre >= peak_loop else "the EM loop"
-    print(f"\nPeak is set by {dominant}: "
-          f"preprocess {peak_pre - baseline:.3f} GiB vs loop {peak_loop - baseline:.3f} GiB "
-          f"above baseline.")
+    print(
+        f"\nPeak is set by {dominant}: "
+        f"preprocess {peak_pre - baseline:.3f} GiB vs loop {peak_loop - baseline:.3f} GiB "
+        f"above baseline."
+    )
 
     if args.json_out:
         with open(args.json_out, "w", encoding="utf-8") as f:

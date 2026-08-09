@@ -1250,9 +1250,7 @@ def _choose_chunk_size(
     when everything fits (caller treats as full-batch).
     """
     dtype_size = np.dtype(np.float64 if dtype is None else dtype).itemsize
-    bytes_per_sample = int(
-        (1 + 2 * n_components + 11 * n_components * n_mix_comps) * dtype_size
-    )
+    bytes_per_sample = int((1 + 2 * n_components + 11 * n_components * n_mix_comps) * dtype_size)
 
     on_gpu = (device == "gpu") or (device is None and _active_device_is_gpu())
     budget = None
@@ -1580,9 +1578,7 @@ class Amica:
                 n_components,
                 _eff_nmix,
                 dtype=_chunk_dtype,
-                prefer_blocking=(
-                    self.config.num_models == 1 and self.config.estep != "classic"
-                ),
+                prefer_blocking=(self.config.num_models == 1 and self.config.estep != "classic"),
             )
             if _eff_chunk_size >= n_samples:
                 _eff_chunk_size = None  # everything fits — full batch
