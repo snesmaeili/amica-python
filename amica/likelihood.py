@@ -22,7 +22,7 @@ def compute_log_det_W(W: jnp.ndarray) -> float:
     """
     _q, r = jnp.linalg.qr(W)
     diag = jnp.diag(r)
-    return jnp.sum(jnp.log(jnp.abs(diag) + 1e-300))
+    return jnp.sum(jnp.log(jnp.maximum(jnp.abs(diag), jnp.finfo(diag.dtype).tiny)))
 
 
 @jax.jit

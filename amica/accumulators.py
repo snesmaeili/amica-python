@@ -123,12 +123,18 @@ def _chunk_stats_one_component(i, y_chunk, alpha, mu, beta, rho, sample_weight=N
         # iteration, and the CPU path is limited by transcendental throughput
         # rather than by BLAS or bandwidth (amica/benchmark/profile_cpu.py).
         #
-        # exp(k*log(max(|y|,1e-300))) reproduces power(|y|, k) on the edge case
+        # exp(k*log(max(|y|,tiny))) reproduces power(|y|, k) on the edge case
         # too: at |y| exactly zero and rho = 1 (the Laplacian floor, minrho),
         # k = 0 gives exp(0) = 1, matching 0**0 = 1. Dividing tmpy by |y| to get
         # the r-1 power would give 0 there instead, which is why that shortcut
         # is not taken.
-        safe_abs = jnp.maximum(abs_y, 1e-300)
+        # The floor must be representable in the working dtype: a literal 1e-300
+        # underflows to 0.0 in float32, so log_abs becomes -inf and (r-1)*log_abs
+        # is 0*-inf = NaN at rho=1 (and tmpy*logab NaNs likewise). finfo.tiny is
+        # the smallest normal in the array's dtype, keeping log_abs finite in both
+        # float32 and float64. In float64 this is ~2.2e-308 vs the old 1e-300, a
+        # difference that can only matter for |y| < 1e-300, which no real fit hits.
+        safe_abs = jnp.maximum(abs_y, jnp.finfo(abs_y.dtype).tiny)
         log_abs = jnp.log(safe_abs)
         tmpy = jnp.exp(r * log_abs)  # |y_scaled|^rho
         fp = r * sign_y * jnp.exp((r - 1.0) * log_abs)

@@ -119,7 +119,7 @@ def _weighted_component_stats(i, y_chunk, w, alpha, mu, beta, rho):
         beta_d_le2 = jnp.sum(ufp * y_scaled)
         beta_d_gt2 = jnp.sum(u * jnp.power(abs_y, r))
 
-        safe_abs = jnp.maximum(abs_y, 1e-300)
+        safe_abs = jnp.maximum(abs_y, jnp.finfo(abs_y.dtype).tiny)
         log_abs = jnp.log(safe_abs)
         tmpy = jnp.exp(r * log_abs)
         logab = r * log_abs
