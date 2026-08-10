@@ -343,7 +343,7 @@ def update_rho_gradient(
         # y = sbeta * (b - mu)
         y_scaled = b * (y - m)
         abs_y_scaled = jnp.abs(y_scaled)
-        safe_abs = jnp.maximum(abs_y_scaled, 1e-300)
+        safe_abs = jnp.maximum(abs_y_scaled, jnp.finfo(abs_y_scaled.dtype).tiny)
 
         # tmpy = |y|^rho
         log_abs = jnp.log(safe_abs)

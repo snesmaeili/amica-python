@@ -65,12 +65,18 @@ def log_generalized_gaussian(
     # General formula works for all rho, but special cases are more precise
 
     # Safe power: |y_scaled|^rho
-    safe_abs = jnp.maximum(abs_y_scaled, 1e-300)
+    safe_abs = jnp.maximum(abs_y_scaled, jnp.finfo(abs_y_scaled.dtype).tiny)
     log_abs = jnp.log(safe_abs)
     abs_y_rho = jnp.exp(rho * log_abs)  # |y_scaled|^rho
 
     # Fortran formula: log(sbeta) - |y_scaled|^rho - gamln(1 + 1/rho) - log(2)
-    log_norm = jnp.log(jnp.maximum(beta, 1e-300)) - gammaln(1.0 + 1.0 / rho) - jnp.log(2.0)
+    # beta may be a Python scalar here (callers pass floats), so take the floor's dtype from
+    # abs_y_scaled, which is always an array in the working dtype.
+    log_norm = (
+        jnp.log(jnp.maximum(beta, jnp.finfo(abs_y_scaled.dtype).tiny))
+        - gammaln(1.0 + 1.0 / rho)
+        - jnp.log(2.0)
+    )
 
     return log_norm - abs_y_rho
 

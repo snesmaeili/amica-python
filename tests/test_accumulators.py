@@ -155,3 +155,37 @@ def test_chunk_stats_additivity():
         np.asarray(stats_full.mu_denom_gt2), np.asarray(stats_sum.mu_denom_gt2), atol=1e-10
     )
     assert float(stats_full.n_chunk) == float(stats_sum.n_chunk)
+
+
+def test_finite_at_zero_activation_all_dtypes():
+    """The GGD floor must be representable in the working dtype.
+
+    At |y_scaled| == 0 with rho == 1 (the Laplacian endpoint, minrho), the shape
+    power is evaluated as exp((rho-1)*log|y|). A literal 1e-300 floor underflows to
+    0.0 in float32, so log|y| = -inf and (rho-1)*log|y| = 0*-inf = NaN (and the rho
+    numerator's tmpy*log|y| = 0*-inf likewise). Regression guard: every accumulator
+    must stay finite at the exact-zero activation for both rho endpoints in float32
+    and float64.
+    """
+    from amica.accumulators import compute_chunk_stats
+
+    # Pass plain NumPy arrays (not jax.numpy): under the JAX backend the jitted function
+    # traces them fine, and under the AMICA_NO_JAX=1 fallback the stub vmap operates on NumPy
+    # directly. Feeding real jax arrays here would break the fallback's np.take-based vmap.
+    for dtype in (np.float32, np.float64):
+        for rho_val in (1.0, 2.0):
+            rng = np.random.RandomState(0)
+            n_comp, n_mix, n_chunk = 4, 3, 32
+            data_chunk = rng.randn(n_comp, n_chunk).astype(dtype)
+            data_chunk[:, 0] = 0.0  # force y_scaled == 0 exactly (mu=0, W=I below)
+            W = np.eye(n_comp, dtype=dtype)
+            alpha = (np.ones((n_mix, n_comp)) / n_mix).astype(dtype)
+            mu = np.zeros((n_mix, n_comp), dtype=dtype)
+            beta = np.ones((n_mix, n_comp), dtype=dtype)
+            rho = np.full((n_mix, n_comp), rho_val, dtype=dtype)
+            stats = compute_chunk_stats(data_chunk, W, alpha, mu, beta, rho, 0.0)
+            for field in stats._fields:
+                arr = np.asarray(getattr(stats, field))
+                assert np.all(np.isfinite(arr)), (
+                    f"non-finite {field} at dtype={np.dtype(dtype).name}, rho={rho_val}"
+                )
