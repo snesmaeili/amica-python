@@ -1013,6 +1013,54 @@ def test_amica_wrapper(tiny_data):
     assert W2.shape == (4, 4)
 
 
+def test_amica_wrapper_whiten_true_applies_sphering():
+    """Regression: whiten=True must undo the internal centring and sphering.
+
+    With ``whiten=True`` the solver centres and spheres the data itself, so
+    ``unmixing_matrix_white_`` operates on whitened data and cannot be applied
+    to the raw X. A previous version returned ``Y = W @ X`` regardless, which
+    silently produced wrong sources -- and returned ``K = None``, so the caller
+    could not even recover the sphering matrix to correct it.
+
+    Only the ``whiten=True`` path was affected. MNE always passes
+    ``whiten=False`` on data it has pre-whitened itself, where ``Y = W @ X`` is
+    correct by construction, so this never reached the MNE integration.
+    """
+    from amica.solver import amica
+
+    rng = np.random.default_rng(0)
+    n, n_samples = 3, 3000
+    sources = np.vstack(
+        [
+            rng.laplace(size=n_samples),
+            rng.laplace(size=n_samples),
+            np.sign(rng.normal(size=n_samples)) * rng.gamma(2, 1, n_samples),
+        ]
+    )
+    sources = (sources - sources.mean(1, keepdims=True)) / sources.std(1, keepdims=True)
+    # Deliberate non-zero offset so the mean subtraction is exercised too.
+    X = rng.normal(size=(n, n)) @ sources + 5.0
+
+    K, W, Y = amica(X, n_components=n, whiten=True, max_iter=150, random_state=0)
+
+    # K is the sphering matrix, not None, so Y is reproducible by the caller.
+    assert K is not None
+    assert K.shape == (n, n)
+    np.testing.assert_allclose(Y, W @ (K @ (X - X.mean(axis=1, keepdims=True))), atol=1e-10)
+
+    # The old behaviour applied the whitened-space unmixer to raw X.
+    assert not np.allclose(Y, W @ X)
+
+    # ...and the sources it returns now actually separate.
+    corr = np.corrcoef(np.vstack([sources, np.asarray(Y)]))[:n, n:]
+    assert np.abs(corr).max(axis=1).min() > 0.97
+
+    # whiten=False is unchanged: nothing to undo, so W applies to X directly.
+    K0, W0, Y0 = amica(X, n_components=n, whiten=False, max_iter=20, random_state=0)
+    assert K0 is None
+    np.testing.assert_allclose(Y0, W0 @ X, atol=1e-10)
+
+
 def test_picard_api_parity(tiny_data):
     """amica() return signature matches picard() exactly.
 

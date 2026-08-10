@@ -2319,9 +2319,11 @@ def amica(
 
     Returns
     -------
-    K : None
-        Pre-whitening matrix.  Always None when ``whiten=False``.
-        Included for the MNE ICA-method signature; MNE discards this value.
+    K : ndarray, shape (n_components, n_features), or None
+        Pre-whitening matrix.  Always None when ``whiten=False``, which is the
+        case for MNE (it pre-whitens itself and discards this value).  When
+        ``whiten=True`` this is the sphering matrix the solver computed, so the
+        caller can reproduce ``Y`` as ``W @ K @ (X - mean)``.
     W : ndarray, shape (n_components, n_components)
         Unmixing matrix (operates on whitened data).
     Y : ndarray, shape (n_components, n_samples)
@@ -2345,9 +2347,19 @@ def amica(
     solver = Amica(config, random_state=random_state)
     result = solver.fit(X)
 
-    K = None  # whiten=False: MNE pre-whitens; kept for the MNE ICA-method signature
     W = result.unmixing_matrix_white_  # (n_components, n_components)
-    Y = W @ X  # (n_components, n_samples)
+
+    if whiten:
+        # The solver centred and sphered internally, so W operates on whitened
+        # data and cannot be applied to the raw X -- the mean and the sphering
+        # have to be put back first.  Returning the sphering matrix as K also
+        # lets the caller reproduce Y, which was impossible while K was None.
+        K = np.asarray(result.whitener_)
+        mean = np.asarray(result.mean_).reshape(-1, 1)
+        Y = W @ (K @ (X - mean))  # (n_components, n_samples)
+    else:
+        K = None  # MNE pre-whitens; kept for the MNE ICA-method signature
+        Y = W @ X  # (n_components, n_samples)
 
     if return_n_iter:
         return K, W, Y, result.n_iter
