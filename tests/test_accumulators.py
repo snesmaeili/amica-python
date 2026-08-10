@@ -167,10 +167,11 @@ def test_finite_at_zero_activation_all_dtypes():
     must stay finite at the exact-zero activation for both rho endpoints in float32
     and float64.
     """
-    import jax.numpy as jnp
-
     from amica.accumulators import compute_chunk_stats
 
+    # Pass plain NumPy arrays (not jax.numpy): under the JAX backend the jitted function
+    # traces them fine, and under the AMICA_NO_JAX=1 fallback the stub vmap operates on NumPy
+    # directly. Feeding real jax arrays here would break the fallback's np.take-based vmap.
     for dtype in (np.float32, np.float64):
         for rho_val in (1.0, 2.0):
             rng = np.random.RandomState(0)
@@ -182,9 +183,7 @@ def test_finite_at_zero_activation_all_dtypes():
             mu = np.zeros((n_mix, n_comp), dtype=dtype)
             beta = np.ones((n_mix, n_comp), dtype=dtype)
             rho = np.full((n_mix, n_comp), rho_val, dtype=dtype)
-            stats = compute_chunk_stats(
-                *(jnp.asarray(a) for a in (data_chunk, W, alpha, mu, beta, rho)), 0.0
-            )
+            stats = compute_chunk_stats(data_chunk, W, alpha, mu, beta, rho, 0.0)
             for field in stats._fields:
                 arr = np.asarray(getattr(stats, field))
                 assert np.all(np.isfinite(arr)), (

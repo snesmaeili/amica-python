@@ -70,8 +70,10 @@ def log_generalized_gaussian(
     abs_y_rho = jnp.exp(rho * log_abs)  # |y_scaled|^rho
 
     # Fortran formula: log(sbeta) - |y_scaled|^rho - gamln(1 + 1/rho) - log(2)
+    # beta may be a Python scalar here (callers pass floats), so take the floor's dtype from
+    # abs_y_scaled, which is always an array in the working dtype.
     log_norm = (
-        jnp.log(jnp.maximum(beta, jnp.finfo(beta.dtype).tiny))
+        jnp.log(jnp.maximum(beta, jnp.finfo(abs_y_scaled.dtype).tiny))
         - gammaln(1.0 + 1.0 / rho)
         - jnp.log(2.0)
     )
