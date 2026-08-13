@@ -1,6 +1,6 @@
 """Tests for multi-model AMICA (num_models > 1).
 
-Stage 1 (this file, first block): the core math in ``amica.multimodel``
+Stage 1 (this file, first block): the core math in ``jamica.multimodel``
 reduces EXACTLY to the single-model accumulator at M=1, and its LL / gamma match
 the existing (previously-unused) scaffolding. Later stages add solver-level
 parity and the Hsu-style synthetic recovery experiment.
@@ -11,11 +11,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from amica import multimodel as mm
-from amica.accumulators import compute_chunk_stats
-from amica.backend import jax, jnp
-from amica.likelihood import compute_multimodel_loglikelihood
-from amica.updates import update_model_weights
+from jamica import multimodel as mm
+from jamica.accumulators import compute_chunk_stats
+from jamica.backend import jax, jnp
+from jamica.likelihood import compute_multimodel_loglikelihood
+from jamica.updates import update_model_weights
 
 ATOL = 1e-11
 
@@ -154,7 +154,7 @@ def test_mm_gm_equals_update_model_weights():
 # Stage 3 — M=1 parity: the multimodel step reduces EXACTLY to the fused step
 # ---------------------------------------------------------------------------
 
-from amica.solver import _amica_step_fused, _amica_step_multimodel  # noqa: E402
+from jamica.solver import _amica_step_fused, _amica_step_multimodel  # noqa: E402
 
 _NAMES = ["W", "A", "c", "alpha", "mu", "beta", "rho", "gm", "ll", "is_good", "newton_used"]
 
@@ -217,7 +217,7 @@ def test_M1_step_matches_fused(iteration, newt_start):
 # Stage 4 — chunked multimodel == full-batch multimodel
 # ---------------------------------------------------------------------------
 
-from amica.solver import _amica_step_multimodel_chunked  # noqa: E402
+from jamica.solver import _amica_step_multimodel_chunked  # noqa: E402
 
 
 def test_mm_chunked_matches_fullbatch_step():
@@ -314,7 +314,7 @@ def test_multimodel_recovers_two_regimes():
     multi-model AMICA should match supervised per-segment ICA on non-stationary
     data, whereas a single model cannot.
     """
-    from amica import Amica, AmicaConfig
+    from jamica import Amica, AmicaConfig
 
     rng = np.random.default_rng(20)
     n = 4
@@ -388,7 +388,7 @@ def test_multimodel_rejection():
     """M>1 likelihood sample rejection: planted spikes are flagged in sample_mask_
     (one global mask across models, thresholding the mixture LL), and do_reject=False
     leaves the mask unset (the multimodel anchor)."""
-    from amica import Amica, AmicaConfig
+    from jamica import Amica, AmicaConfig
 
     rng = np.random.RandomState(0)
     data = rng.laplace(size=(5, 1500))
@@ -498,7 +498,7 @@ def test_solver_forwards_chunk_size_to_rejection_loglik(monkeypatch):
     Covers the wiring rather than the helper: review noted that equivalence was
     tested but the forwarding was not.
     """
-    from amica import Amica, AmicaConfig
+    from jamica import Amica, AmicaConfig
 
     real_fn = mm.compute_model_sample_loglik  # capture before patching
     seen = {}

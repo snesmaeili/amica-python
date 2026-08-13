@@ -29,9 +29,9 @@ A large gap between them is itself the finding.
 
 Usage::
 
-    python -m amica.benchmark.profile_memory                  # user preset
-    python -m amica.benchmark.profile_memory --preset benchmark
-    python -m amica.benchmark.profile_memory --n-channels 64 --n-samples 400000
+    python -m jamica.benchmark.profile_memory                  # user preset
+    python -m jamica.benchmark.profile_memory --preset benchmark
+    python -m jamica.benchmark.profile_memory --n-channels 64 --n-samples 400000
 """
 
 from __future__ import annotations
@@ -182,9 +182,9 @@ def main() -> int:
 
     import psutil  # noqa: F401  -- fail early and clearly if absent
 
-    from amica import Amica, AmicaConfig
-    from amica import preprocessing as prep
-    from amica import solver as solver_mod
+    from jamica import Amica, AmicaConfig
+    from jamica import preprocessing as prep
+    from jamica import solver as solver_mod
 
     chunk_size: int | Literal["auto"] | None
     if args.chunk_size == "none":

@@ -14,8 +14,8 @@ uses: worst Hungarian-matched, sign-aligned correlation between unmixing rows.
 
 Usage::
 
-    python -m amica.benchmark.compare_precision                       # synthetic
-    python -m amica.benchmark.compare_precision --n-components 64 \
+    python -m jamica.benchmark.compare_precision                       # synthetic
+    python -m jamica.benchmark.compare_precision --n-components 64 \
         --n-samples 200000 --max-iter 100
 """
 
@@ -76,7 +76,7 @@ def make_data(n_components: int, n_samples: int, seed: int) -> np.ndarray:
 
 
 def run_one(data: np.ndarray, dtype: str, max_iter: int, seed: int) -> dict:
-    from amica import Amica, AmicaConfig
+    from jamica import Amica, AmicaConfig
 
     cfg = AmicaConfig(
         num_models=1,
@@ -159,7 +159,7 @@ def main() -> int:
             [
                 sys.executable,
                 "-m",
-                "amica.benchmark.compare_precision",
+                "jamica.benchmark.compare_precision",
                 "--single",
                 dtype,
                 "--n-components",

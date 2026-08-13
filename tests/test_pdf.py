@@ -1,10 +1,10 @@
-"""Tests for amica.pdf module."""
+"""Tests for jamica.pdf module."""
 
 from __future__ import annotations
 
 import numpy as np
 
-from amica import pdf
+from jamica import pdf
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -27,7 +27,7 @@ def _make_mock_inputs(n_comp=4, n_mix=3, n_samp=1000):
 
 
 def test_log_generalized_gaussian():
-    from amica.backend import jnp
+    from jamica.backend import jnp
 
     rng = np.random.RandomState(42)
     y = rng.randn(500)
@@ -57,7 +57,7 @@ def test_log_generalized_gaussian():
 
 
 def test_log_generalized_gaussian_mixture():
-    from amica.backend import jnp
+    from jamica.backend import jnp
 
     rng = np.random.RandomState(42)
     y = rng.randn(500)
@@ -76,7 +76,7 @@ def test_log_generalized_gaussian_mixture():
 
 
 def test_compute_responsibilities():
-    from amica.backend import jnp
+    from jamica.backend import jnp
 
     rng = np.random.RandomState(42)
     y = rng.randn(500)
@@ -100,7 +100,7 @@ def test_compute_responsibilities():
 
 
 def test_score_functions():
-    from amica.backend import jnp
+    from jamica.backend import jnp
 
     rng = np.random.RandomState(42)
     y = rng.randn(500)
@@ -127,7 +127,7 @@ def test_score_functions():
 
 
 def test_compute_all_scores_and_likelihood():
-    from amica.backend import jnp
+    from jamica.backend import jnp
 
     n_comp, n_mix, n_samp = 4, 3, 500
     y, alpha, mu, beta, rho = _make_mock_inputs(n_comp, n_mix, n_samp)

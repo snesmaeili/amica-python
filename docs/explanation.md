@@ -1,6 +1,6 @@
-# Understanding amica
+# Understanding jamica
 
-amica is a native Python implementation of **Adaptive Mixture Independent Component Analysis (AMICA)**, an ICA algorithm originally developed at the University of California, San Diego (UCSD) for blind source separation of EEG and other multichannel signals.
+jamica is a native Python implementation of **Adaptive Mixture Independent Component Analysis (AMICA)**, an ICA algorithm originally developed at the University of California, San Diego (UCSD) for blind source separation of EEG and other multichannel signals.
 
 Unlike many ICA algorithms that assume a single statistical model for all sources, AMICA models each source using a **mixture of generalized Gaussian distributions** and can optionally fit **multiple ICA models** to account for non-stationary recordings.
 
@@ -56,9 +56,9 @@ These capabilities have made AMICA one of the strongest-performing ICA methods f
 
 ______________________________________________________________________
 
-## amica
+## jamica
 
-amica brings AMICA into the modern scientific Python ecosystem.
+jamica brings AMICA into the modern scientific Python ecosystem.
 
 It provides:
 
@@ -74,24 +74,24 @@ ______________________________________________________________________
 
 ## Choosing an interface
 
-amica provides two primary interfaces.
+jamica provides two primary interfaces.
 
 ### MNE-Python interface
 
 For EEG analysis with MNE, use:
 
 ```python
-from amica import fit_ica
+from jamica import fit_ica
 ```
 
 This returns a standard `mne.preprocessing.ICA` object that integrates directly with existing MNE workflows.
 
-### Native amica interface
+### Native jamica interface
 
 For NumPy arrays or custom pipelines, use:
 
 ```python
-from amica import Amica, AmicaConfig
+from jamica import Amica, AmicaConfig
 ```
 
 This provides direct access to the AMICA algorithm and all configuration options.
@@ -100,7 +100,7 @@ ______________________________________________________________________
 
 ## Numerical validation
 
-amica has been validated against the Fortran AMICA 1.7 reference implementation on the tested single-model configurations. The reference used was a locally patched build; see the README for the scope of that validation and what it does not cover.
+jamica has been validated against the Fortran AMICA 1.7 reference implementation on the tested single-model configurations. The reference used was a locally patched build; see the README for the scope of that validation and what it does not cover.
 
 The documentation includes validation experiments, reproducibility analyses, and performance benchmarks demonstrating numerical agreement between the two implementations.
 

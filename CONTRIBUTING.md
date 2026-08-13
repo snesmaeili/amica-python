@@ -1,6 +1,6 @@
-# Contributing to amica
+# Contributing to jamica
 
-Thank you for your interest in contributing to **amica**!
+Thank you for your interest in contributing to **jamica**!
 
 We welcome contributions of all kinds, including bug fixes, new features, documentation improvements, tests, benchmarks, and examples.
 
@@ -11,8 +11,8 @@ ______________________________________________________________________
 ## 1. Fork and Clone
 
 ```bash
-git clone https://github.com/<your-username>/amica.git
-cd amica
+git clone https://github.com/<your-username>/jamica.git
+cd jamica
 ```
 
 ## 2. Create a Virtual Environment
@@ -31,7 +31,7 @@ uv venv
 source .venv/bin/activate
 ```
 
-## 3. Install amica
+## 3. Install jamica
 
 Using pip:
 
@@ -94,7 +94,7 @@ ______________________________________________________________________
 
 # Backend Testing
 
-amica supports multiple computational backends.
+jamica supports multiple computational backends.
 
 ## NumPy
 
@@ -151,7 +151,7 @@ ______________________________________________________________________
 
 # Code Style
 
-amica uses:
+jamica uses:
 
 - **Ruff** for linting and formatting
 - **pre-commit** for automated quality checks
@@ -205,7 +205,7 @@ ______________________________________________________________________
 
 # Benchmarks and Validation
 
-Contributions that compare amica against other ICA implementations are especially valuable, including:
+Contributions that compare jamica against other ICA implementations are especially valuable, including:
 
 - Fortran AMICA 1.7
 - Picard

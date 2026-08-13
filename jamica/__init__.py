@@ -1,4 +1,4 @@
-"""amica: Native Python AMICA for MNE-Python.
+"""jamica: Native Python AMICA for MNE-Python.
 
 Adaptive Mixture Independent Component Analysis (AMICA) [1]_ [2]_ with JAX
 acceleration. Designed as a native ICA method for MNE-Python

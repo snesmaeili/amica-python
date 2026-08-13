@@ -121,7 +121,7 @@ def _chunk_stats_one_component(i, y_chunk, alpha, mu, beta, rho, sample_weight=N
         #
         # This is the hot loop: it runs per mixture component per chunk per
         # iteration, and the CPU path is limited by transcendental throughput
-        # rather than by BLAS or bandwidth (amica/benchmark/profile_cpu.py).
+        # rather than by BLAS or bandwidth (jamica/benchmark/profile_cpu.py).
         #
         # exp(k*log(max(|y|,tiny))) reproduces power(|y|, k) on the edge case
         # too: at |y| exactly zero and rho = 1 (the Laplacian floor, minrho),

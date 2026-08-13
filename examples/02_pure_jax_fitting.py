@@ -2,7 +2,7 @@
 Pure-JAX AMICA on a NumPy array
 ===============================
 
-This example shows how to configure :class:`amica.AmicaConfig` and fit AMICA
+This example shows how to configure :class:`jamica.AmicaConfig` and fit AMICA
 directly on a NumPy array.
 
 Use this interface when your data is already represented as an array, for
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from amica import Amica, AmicaConfig
+from jamica import Amica, AmicaConfig
 
 # %%
 # Generate synthetic data

@@ -1,4 +1,4 @@
-"""Tests for amica.viz module."""
+"""Tests for jamica.viz module."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
-from amica import viz
+from jamica import viz
 
 # ---------------------------------------------------------------------------
 # Helpers

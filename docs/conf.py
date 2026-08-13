@@ -1,4 +1,4 @@
-"""Sphinx configuration for the amica documentation."""
+"""Sphinx configuration for the jamica documentation."""
 
 from __future__ import annotations
 
@@ -22,14 +22,14 @@ sys.path.insert(0, str(REPO_ROOT))
 # Project information
 # ---------------------------------------------------------------------------
 
-project = "amica"
-author = "amica developers"
+project = "jamica"
+author = "jamica developers"
 
 _today = date.today()
 copyright = f"2024-{_today.year}, {author}. Last updated on {_today.isoformat()}"
 
 try:
-    version = get_version("amica")
+    version = get_version("jamica")
 except PackageNotFoundError:
     version = "0.1.0"
 
@@ -141,9 +141,9 @@ copybutton_only_copy_prompt_lines = False
 # ---------------------------------------------------------------------------
 
 sphinx_gallery_conf = {
-    "doc_module": "amica",
+    "doc_module": "jamica",
     "reference_url": {
-        "amica": None,
+        "jamica": None,
     },
     "examples_dirs": str(REPO_ROOT / "examples"),
     "gallery_dirs": "auto_examples",
@@ -161,15 +161,15 @@ sphinx_gallery_conf = {
 # ---------------------------------------------------------------------------
 
 html_theme = "pydata_sphinx_theme"
-html_title = "amica"
-html_short_title = "amica"
+html_title = "jamica"
+html_short_title = "jamica"
 html_show_sphinx = False
 html_show_copyright = True
 
 html_static_path = ["_static"]
 
 html_theme_options = {
-    "github_url": "https://github.com/snesmaeili/amica",
+    "github_url": "https://github.com/snesmaeili/jamica",
     "use_edit_page_button": True,
     "navigation_with_keys": False,
     "show_toc_level": 2,
@@ -183,12 +183,12 @@ html_theme_options = {
     "icon_links": [
         {
             "name": "GitHub",
-            "url": "https://github.com/snesmaeili/amica",
+            "url": "https://github.com/snesmaeili/jamica",
             "icon": "fa-brands fa-github",
         },
         {
             "name": "PyPI",
-            "url": "https://pypi.org/project/amica/",
+            "url": "https://pypi.org/project/jamica/",
             "icon": "fa-brands fa-python",
         },
     ],
@@ -196,7 +196,7 @@ html_theme_options = {
 
 html_context = {
     "github_user": "snesmaeili",
-    "github_repo": "amica",
+    "github_repo": "jamica",
     "github_version": "main",
     "doc_path": "docs",
 }

@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from amica import mne_integration
-from amica.solver import AmicaResult
+from jamica import mne_integration
+from jamica.solver import AmicaResult
 
 
 class MockInfo(dict):
@@ -113,7 +113,7 @@ def test_compute_pca():
     assert ev.shape == (4,)
 
 
-@patch("amica.Amica")
+@patch("jamica.Amica")
 def test_fit_ica_basic(AmicaMock, mock_mne_modules):
     """Test fit_ica normal execution path."""
     raw = MockRaw()
@@ -139,7 +139,7 @@ def test_fit_ica_basic(AmicaMock, mock_mne_modules):
     assert ica.mixing_matrix_.shape == (4, 4)
 
 
-@patch("amica.Amica")
+@patch("jamica.Amica")
 def test_fit_ica_stores_unmixer_for_unwhitened_pca(AmicaMock, mock_mne_modules):
     """Regression: ica.unmixing_matrix_ must operate on unwhitened X_pca.
 
@@ -197,7 +197,7 @@ def test_mne_not_installed(monkeypatch):
         mne_integration.fit_ica(MockRaw())
 
 
-@patch("amica.Amica")
+@patch("jamica.Amica")
 def test_fit_ica_picks_string(AmicaMock, mock_mne_modules):
     raw = MockRaw(data=np.random.randn(4, 1000))
     mock_result = MagicMock(spec=AmicaResult)
@@ -212,7 +212,7 @@ def test_fit_ica_picks_string(AmicaMock, mock_mne_modules):
     assert hasattr(ica_str, "amica_result_")
 
 
-@patch("amica.Amica")
+@patch("jamica.Amica")
 def test_fit_ica_picks_list(AmicaMock, mock_mne_modules):
     raw = MockRaw(data=np.random.randn(4, 1000))
     mock_result = MagicMock(spec=AmicaResult)
@@ -233,7 +233,7 @@ def test_fit_ica_picks_list(AmicaMock, mock_mne_modules):
     assert hasattr(ica_list, "amica_result_")
 
 
-@patch("amica.Amica")
+@patch("jamica.Amica")
 def test_fit_ica_raw_with_reject(AmicaMock, mock_mne_modules):
     """Test lines 218-233: Raw with reject parameters uses Epochs."""
     raw = MockRaw(data=np.random.randn(4, 1000))
@@ -263,7 +263,7 @@ def test_fit_ica_raw_with_reject(AmicaMock, mock_mne_modules):
     assert ica.n_components_ == 4
 
 
-@patch("amica.Amica")
+@patch("jamica.Amica")
 def test_fit_ica_names_exception(AmicaMock, mock_mne_modules, monkeypatch):
     """Test line 327-328: Exception when assigning _ica_names."""
     raw = MockRaw()

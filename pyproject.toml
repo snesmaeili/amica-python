@@ -3,8 +3,8 @@ requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "amica"
-version = "0.1.0"
+name = "jamica"
+version = "0.2.0"
 description = "Native Python implementation of AMICA for MNE-Python and scientific EEG workflows."
 readme = { file = "README.md", content-type = "text/markdown" }
 license = { text = "BSD-3-Clause" }
@@ -13,6 +13,7 @@ authors = [
   { name = "Sina Esmaeili", email = "sina.esmaeili@umontreal.ca" },
 ]
 keywords = [
+  "jamica",
   "amica",
   "ica",
   "eeg",
@@ -68,7 +69,7 @@ test = [
   # matplotlib at module scope, so its absence is a collection error that stops
   # the whole run -- which is what `pip install -e ".[dev]"` followed by
   # `pytest`, exactly as CONTRIBUTING.md documents it, used to produce.
-  "amica[jax,viz]",
+  "jamica[jax,viz]",
   "pytest>=8.0",
   "pytest-cov",
   "pytest-xdist",
@@ -93,7 +94,7 @@ docs = [
 ]
 
 dev = [
-  "amica[test,docs]",
+  "jamica[test,docs]",
   "pre-commit>=3.0",
   "ruff>=0.9",
   "towncrier>=23.0",
@@ -109,18 +110,18 @@ release = [
 ]
 
 all = [
-  "amica[jax,mne,icalabel,viz,test,docs]",
+  "jamica[jax,mne,icalabel,viz,test,docs]",
 ]
 
 [project.urls]
-Homepage = "https://github.com/snesmaeili/amica"
-Documentation = "https://snesmaeili.github.io/amica/"
-Repository = "https://github.com/snesmaeili/amica.git"
-Issues = "https://github.com/snesmaeili/amica/issues"
-Changelog = "https://github.com/snesmaeili/amica/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/snesmaeili/jamica"
+Documentation = "https://snesmaeili.github.io/jamica/"
+Repository = "https://github.com/snesmaeili/jamica.git"
+Issues = "https://github.com/snesmaeili/jamica/issues"
+Changelog = "https://github.com/snesmaeili/jamica/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
-include = ["amica*"]
+include = ["jamica*"]
 
 [tool.ruff]
 line-length = 100
@@ -145,7 +146,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["amica"]
+known-first-party = ["jamica"]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
@@ -179,17 +180,17 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
-source = ["amica"]
+source = ["jamica"]
 omit = [
-  "amica/binary.py",
+  "jamica/binary.py",
 ]
 
 [tool.towncrier]
-package = "amica"
+package = "jamica"
 filename = "CHANGELOG.md"
 directory = "changes"
-title_format = "## [{version}](https://github.com/snesmaeili/amica/releases/tag/v{version}) ({project_date})"
-issue_format = "[#{issue}](https://github.com/snesmaeili/amica/pull/{issue})"
+title_format = "## [{version}](https://github.com/snesmaeili/jamica/releases/tag/v{version}) ({project_date})"
+issue_format = "[#{issue}](https://github.com/snesmaeili/jamica/pull/{issue})"
 template = "changes/template.md"
 
 [[tool.towncrier.type]]

@@ -28,9 +28,9 @@ Three independent views, because no single one is trustworthy on its own:
 
 Usage::
 
-    python -m amica.benchmark.profile_cpu                      # default fixture
-    python -m amica.benchmark.profile_cpu --n-components 64 --n-samples 785328
-    python -m amica.benchmark.profile_cpu --dtype float32      # precision lever
+    python -m jamica.benchmark.profile_cpu                      # default fixture
+    python -m jamica.benchmark.profile_cpu --n-components 64 --n-samples 785328
+    python -m jamica.benchmark.profile_cpu --dtype float32      # precision lever
 """
 
 from __future__ import annotations
@@ -142,7 +142,7 @@ def main() -> int:
         jax.config.update("jax_enable_x64", True)
     dtype = np.float64 if args.dtype == "float64" else np.float32
 
-    from amica import pdf
+    from jamica import pdf
 
     C, T, K = args.n_components, args.n_samples, args.n_mix
     y, alpha, mu, beta, rho = make_fixture(C, T, K, args.seed, dtype)

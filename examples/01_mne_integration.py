@@ -2,7 +2,7 @@
 AMICA via MNE-Python
 ====================
 
-This example shows how to fit AMICA through the :func:`amica.fit_ica`
+This example shows how to fit AMICA through the :func:`jamica.fit_ica`
 wrapper.
 
 The wrapper returns a standard :class:`mne.preprocessing.ICA` object, so the
@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import mne
 
-from amica import fit_ica
+from jamica import fit_ica
 
 # %%
 # Load data
