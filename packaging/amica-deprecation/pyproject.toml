@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=77.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "amica"
+version = "0.1.1"
+description = "Renamed to jamica -- install `jamica` instead. This release installs it for you and ships no modules of its own."
+readme = { file = "README.md", content-type = "text/markdown" }
+license = { text = "BSD-3-Clause" }
+requires-python = ">=3.10"
+authors = [
+  { name = "Sina Esmaeili", email = "sina.esmaeili@umontreal.ca" },
+]
+classifiers = [
+  "Development Status :: 7 - Inactive",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: BSD License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering",
+]
+
+# The whole point of this release. Installing `amica` now pulls in the renamed
+# package, so an existing `pip install amica` still lands working code.
+dependencies = [
+  "jamica>=0.2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/snesmaeili/jamica"
+Documentation = "https://snesmaeili.github.io/jamica/"
+Repository = "https://github.com/snesmaeili/jamica.git"
+Issues = "https://github.com/snesmaeili/jamica/issues"
+
+# Deliberately empty. Shipping a top-level `amica/` module here would re-create
+# the file-level collision with the unrelated `amica-python` distribution --
+# which is the entire reason the project was renamed. This release vacates the
+# `amica` import namespace instead of squatting on it.
+[tool.setuptools]
+packages = []
