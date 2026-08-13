@@ -68,6 +68,11 @@ jobs:
           fi
 
       - name: Upload coverage to Codecov
+        # Dependabot pull requests do not receive repository secrets, so
+        # CODECOV_TOKEN is empty there and the upload is refused. Coverage from
+        # a dependency bump tells us nothing anyway -- the tests themselves
+        # still run and still gate the merge.
+        if: github.actor != 'dependabot[bot]'
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

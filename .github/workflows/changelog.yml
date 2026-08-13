@@ -11,6 +11,9 @@ jobs:
   check-changelog:
     name: Check changelog fragment
     runs-on: ubuntu-latest
+    # Dependabot never writes a fragment, and a dependency bump does not need a
+    # user-facing changelog entry, so requiring one only blocks the merge.
+    if: github.actor != 'dependabot[bot]'
 
     steps:
       - name: Check out repository
