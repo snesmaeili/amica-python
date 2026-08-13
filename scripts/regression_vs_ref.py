@@ -3,7 +3,7 @@
 Compares HEAD against 450a63cd -- the last commit before any of this work, and
 the code the manuscript's results were produced with. Each version is fitted in
 its own subprocess with PYTHONPATH pointing at its own checkout, because both
-install as `amica` and would otherwise shadow each other.
+install as `jamica` and would otherwise shadow each other.
 
 Three configurations, because they carry different guarantees and conflating
 them is how a "no change" claim gets overstated:
@@ -49,7 +49,7 @@ PYTHON = CURRENT / ".venv-dev/Scripts/python.exe"
 WORKER = r"""
 import json, sys
 import numpy as np
-from amica import Amica, AmicaConfig
+from jamica import Amica, AmicaConfig
 
 cfg_kw = json.loads(sys.argv[1])
 out = sys.argv[2]

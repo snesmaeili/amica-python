@@ -1,7 +1,7 @@
 {
-  "title": "amica: Adaptive Mixture ICA for Python and MNE-Python",
+  "title": "jamica: Adaptive Mixture ICA for Python and MNE-Python",
   "description": "Native Python implementation of AMICA (Adaptive Mixture ICA) for MNE-Python, with JAX acceleration.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "upload_type": "software",
   "license": "bsd-3-clause",
   "access_right": "open",
@@ -46,7 +46,7 @@
   ],
   "related_identifiers": [
     {
-      "identifier": "https://github.com/snesmaeili/amica",
+      "identifier": "https://github.com/snesmaeili/jamica",
       "relation": "isSupplementTo",
       "scheme": "url"
     }

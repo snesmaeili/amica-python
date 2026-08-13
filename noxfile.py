@@ -3,7 +3,7 @@
 # dependencies = ["nox", "uv"]
 # ///
 
-"""Nox sessions for amica development."""
+"""Nox sessions for jamica development."""
 
 from __future__ import annotations
 

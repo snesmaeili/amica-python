@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 type: software
-title: "amica"
+title: "jamica"
 abstract: "Native Python implementation of AMICA (Adaptive Mixture ICA) for MNE-Python, with JAX acceleration."
 authors:
   - family-names: "Esmaeili"
@@ -28,10 +28,10 @@ authors:
     orcid: "https://orcid.org/0000-0002-3790-9651"
     affiliation: "Université de Montréal, Mila"
 license: BSD-3-Clause
-repository-code: "https://github.com/snesmaeili/amica"
+repository-code: "https://github.com/snesmaeili/jamica"
 doi: "10.5281/zenodo.21817485"
-version: "0.1.0"
-date-released: "2026-08-06"
+version: "0.2.0"
+date-released: "2026-08-13"
 keywords:
   - EEG
   - MEG

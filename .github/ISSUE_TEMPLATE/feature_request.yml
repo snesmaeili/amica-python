@@ -1,5 +1,5 @@
 name: Feature Request
-description: Suggest a new feature, enhancement, or improvement for PyAMICA.
+description: Suggest a new feature, enhancement, or improvement for jamica.
 title: "[FEATURE] "
 labels:
   - enhancement
@@ -8,14 +8,14 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thank you for helping improve PyAMICA.
+        Thank you for helping improve jamica.
 
   - type: textarea
     id: summary
     attributes:
       label: Summary
       description: Briefly describe the proposed feature.
-      placeholder: What would you like PyAMICA to support?
+      placeholder: What would you like jamica to support?
     validations:
       required: true
 

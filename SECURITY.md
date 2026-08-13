@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-amica is under active development. Security fixes are generally applied to the latest version on the `main` branch and the latest published release.
+jamica is under active development. Security fixes are generally applied to the latest version on the `main` branch and the latest published release.
 
 | Version        | Supported |
 | -------------- | --------- |
@@ -33,4 +33,4 @@ Security-relevant issues may include:
 - Unsafe deserialization
 - Vulnerabilities in packaging or CI workflows
 
-Thank you for helping keep amica secure.
+Thank you for helping keep jamica secure.

@@ -32,7 +32,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     # PyPI Trusted Publishing (OIDC) -- no API token. Matches the configured publisher:
-    #   repository snesmaeili/amica, workflow release.yml, environment (Any).
+    #   repository snesmaeili/jamica, workflow release.yml, environment (Any).
     permissions:
       id-token: write
     steps:

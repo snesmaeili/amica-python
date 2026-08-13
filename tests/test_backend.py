@@ -1,4 +1,4 @@
-"""Direct tests for amica.backend module."""
+"""Direct tests for jamica.backend module."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import contextlib
 
 import numpy as np
 
-from amica import backend
+from jamica import backend
 
 
 def test_has_jax_flag():
@@ -41,7 +41,7 @@ def test_ensure_numpy():
     assert isinstance(res_np, np.ndarray)
 
     if backend.HAS_JAX:
-        from amica.backend import jnp
+        from jamica.backend import jnp
 
         arr_jnp = jnp.array([6.0, 7.0])
         res_jnp = backend.ensure_numpy(arr_jnp)

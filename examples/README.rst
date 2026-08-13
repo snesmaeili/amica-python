@@ -3,7 +3,7 @@
 Examples
 ========
 
-Runnable, commented examples for **PyAMICA**.
+Runnable, commented examples for **jamica**.
 
 Run on your own data
 --------------------

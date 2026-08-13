@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from amica import metrics
+from jamica import metrics
 
 
 class MockAmicaResult:

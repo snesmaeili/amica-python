@@ -1331,7 +1331,7 @@ class Amica:
 
     Examples
     --------
-    >>> from amica import Amica, AmicaConfig
+    >>> from jamica import Amica, AmicaConfig
     >>> config = AmicaConfig(max_iter=500, num_mix_comps=3)
     >>> amica = Amica(config, random_state=42)
     >>> result = amica.fit(data)  # data: (n_channels, n_samples)

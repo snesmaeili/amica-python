@@ -41,7 +41,7 @@ if use_jax_env:
         import jax
 
         # Enable 64-bit precision by default for scientific accuracy.
-        # WARNING: This sets the global JAX context. If `amica` is used
+        # WARNING: This sets the global JAX context. If `jamica` is used
         # alongside other JAX packages expecting float32, this may cause conflicts.
         jax.config.update("jax_enable_x64", True)
 
@@ -50,7 +50,7 @@ if use_jax_env:
         _cache_dir: str | None = (
             _cache_dir_env
             if _cache_dir_env
-            else os.path.join(os.path.expanduser("~"), ".cache", "amica", "jax_cache")
+            else os.path.join(os.path.expanduser("~"), ".cache", "jamica", "jax_cache")
         )
         try:
             assert _cache_dir is not None

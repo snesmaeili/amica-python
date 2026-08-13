@@ -169,7 +169,7 @@ def compute_responsibilities(
     #
     # so the second exponential is algebraically redundant. On this workload
     # that is one of four full transcendental passes per sample, and the density
-    # path is where CPU time goes -- see amica/benchmark/profile_cpu.py.
+    # path is where CPU time goes -- see jamica/benchmark/profile_cpu.py.
     # Dropping the log/exp round-trip is also marginally more accurate, not less.
     shift = jnp.max(log_weighted_pdfs, axis=0)
     shifted = jnp.exp(log_weighted_pdfs - shift)

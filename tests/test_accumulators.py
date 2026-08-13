@@ -1,4 +1,4 @@
-"""Direct tests for amica.accumulators module."""
+"""Direct tests for jamica.accumulators module."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def _make_mock_inputs(n_comp=4, n_mix=3, n_chunk=1000):
 
 
 def test_zero_stats():
-    from amica.accumulators import zero_stats
+    from jamica.accumulators import zero_stats
 
     stats = zero_stats(n_comp=4, n_mix=3)
 
@@ -45,8 +45,8 @@ def test_zero_stats():
 
 
 def test_add_stats():
-    from amica.accumulators import add_stats, zero_stats
-    from amica.backend import jnp
+    from jamica.accumulators import add_stats, zero_stats
+    from jamica.backend import jnp
 
     stats1 = zero_stats(4, 3)
     stats2 = zero_stats(4, 3)
@@ -63,8 +63,8 @@ def test_add_stats():
 
 
 def test_compute_chunk_stats():
-    from amica.accumulators import compute_chunk_stats
-    from amica.backend import jnp
+    from jamica.accumulators import compute_chunk_stats
+    from jamica.backend import jnp
 
     n_comp, n_mix, n_chunk = 4, 3, 500
     (data_chunk, W, alpha, mu, beta, rho, log_det_sphere) = _make_mock_inputs(
@@ -102,8 +102,8 @@ def test_compute_chunk_stats():
 
 def test_chunk_stats_additivity():
     """Verify that adding two chunk stats equals computing stats on the full data."""
-    from amica.accumulators import add_stats, compute_chunk_stats
-    from amica.backend import jnp
+    from jamica.accumulators import add_stats, compute_chunk_stats
+    from jamica.backend import jnp
 
     n_comp, n_mix, n_chunk = 4, 3, 1000
     (data, W, alpha, mu, beta, rho, log_det_sphere) = _make_mock_inputs(
@@ -167,7 +167,7 @@ def test_finite_at_zero_activation_all_dtypes():
     must stay finite at the exact-zero activation for both rho endpoints in float32
     and float64.
     """
-    from amica.accumulators import compute_chunk_stats
+    from jamica.accumulators import compute_chunk_stats
 
     # Pass plain NumPy arrays (not jax.numpy): under the JAX backend the jitted function
     # traces them fine, and under the AMICA_NO_JAX=1 fallback the stub vmap operates on NumPy

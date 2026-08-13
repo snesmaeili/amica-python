@@ -62,9 +62,9 @@ jobs:
           MPLBACKEND: Agg
         run: |
           if [ "${{ matrix.backend }}" == "jax-cpu" ]; then
-            python -m pytest tests/ -v --tb=short --backend=cpu --cov=amica --cov-report=xml -n auto
+            python -m pytest tests/ -v --tb=short --backend=cpu --cov=jamica --cov-report=xml -n auto
           else
-            python -m pytest tests/ -v --tb=short --backend=numpy --cov=amica --cov-report=xml -n auto
+            python -m pytest tests/ -v --tb=short --backend=numpy --cov=jamica --cov-report=xml -n auto
           fi
 
       - name: Upload coverage to Codecov

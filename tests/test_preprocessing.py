@@ -1,4 +1,4 @@
-"""Direct tests for amica.preprocessing."""
+"""Direct tests for jamica.preprocessing."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ RNG = np.random.RandomState(42)
 # Helpers
 # ---------------------------------------------------------------------------
 def _cov(data):
-    from amica.preprocessing import compute_covariance
+    from jamica.preprocessing import compute_covariance
 
     return np.asarray(compute_covariance(data, data.mean(axis=1)))
 
@@ -23,7 +23,7 @@ def _cov(data):
 
 
 def test_compute_mean():
-    from amica.preprocessing import compute_mean
+    from jamica.preprocessing import compute_mean
 
     # Basic correct mean
     data = np.array([[1.0, 3.0, 5.0], [2.0, 4.0, 6.0]])
@@ -39,7 +39,7 @@ def test_compute_mean():
 
 
 def test_compute_covariance():
-    from amica.preprocessing import compute_covariance
+    from jamica.preprocessing import compute_covariance
 
     data = RNG.randn(6, 500)
     cov = np.asarray(compute_covariance(data, data.mean(axis=1)))
@@ -56,7 +56,7 @@ def test_compute_covariance():
 
 
 def test_compute_sphering_matrix_standard():
-    from amica.preprocessing import compute_dewhitening_matrix, compute_sphering_matrix
+    from jamica.preprocessing import compute_dewhitening_matrix, compute_sphering_matrix
 
     rng = np.random.RandomState(1)
     data = rng.randn(4, 5000)
@@ -85,7 +85,7 @@ def test_compute_sphering_matrix_standard():
 def test_compute_sphering_matrix_exceptions_and_edge_cases(monkeypatch):
     import scipy.linalg as sla
 
-    from amica.preprocessing import compute_sphering_matrix
+    from jamica.preprocessing import compute_sphering_matrix
 
     # Near rank 2 dataset -> mineig filtering
     rng = np.random.RandomState(7)
@@ -120,7 +120,7 @@ def test_compute_sphering_matrix_exceptions_and_edge_cases(monkeypatch):
 
 
 def test_preprocess_data_flags():
-    from amica.preprocessing import preprocess_data
+    from jamica.preprocessing import preprocess_data
 
     rng = np.random.RandomState(3)
     data = rng.randn(4, 10_000)
@@ -174,7 +174,7 @@ def test_preprocess_data_flags():
 
 
 def test_apply_sphering_and_dewhitening():
-    from amica.preprocessing import apply_sphering, compute_dewhitening_matrix
+    from jamica.preprocessing import apply_sphering, compute_dewhitening_matrix
 
     data = RNG.randn(4, 1000)
     mean = data.mean(axis=1)

@@ -2,9 +2,9 @@
 MNE sample validation
 =====================
 
-This advanced example validates PyAMICA on the MNE sample EEG dataset.
+This advanced example validates jamica on the MNE sample EEG dataset.
 
-It demonstrates that PyAMICA works as a drop-in MNE-compatible ICA method and
+It demonstrates that jamica works as a drop-in MNE-compatible ICA method and
 produces reproducibility and comparison artifacts:
 
 - AMICA vs. Picard topomap comparison
@@ -48,8 +48,8 @@ OUT_DIR = Path(__file__).resolve().parent / "results"
 
 
 def fit_amica(raw, *, n_components: int, max_iter: int, random_state: int):
-    """Fit PyAMICA through the standard MNE-compatible entry point."""
-    from amica import fit_ica
+    """Fit jamica through the standard MNE-compatible entry point."""
+    from jamica import fit_ica
 
     start = time.perf_counter()
 

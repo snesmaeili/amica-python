@@ -1,19 +1,19 @@
-# amica
+# jamica
 
-[![CI](https://img.shields.io/github/actions/workflow/status/snesmaeili/amica/tests.yml?branch=main&label=CI)](https://github.com/snesmaeili/amica/actions/workflows/tests.yml)
-[![Docs](https://img.shields.io/github/actions/workflow/status/snesmaeili/amica/docs.yml?branch=main&label=docs)](https://snesmaeili.github.io/amica/)
-[![Codecov](https://img.shields.io/codecov/c/github/snesmaeili/amica)](https://codecov.io/gh/snesmaeili/amica)
-[![PyPI - Version](https://img.shields.io/pypi/v/amica.svg)](https://pypi.org/project/amica/)
-[![conda-forge](https://img.shields.io/conda/vn/conda-forge/amica.svg)](https://anaconda.org/conda-forge/amica)
-[![Python Versions](https://img.shields.io/pypi/pyversions/amica.svg)](https://pypi.org/project/amica/)
+[![CI](https://img.shields.io/github/actions/workflow/status/snesmaeili/jamica/tests.yml?branch=main&label=CI)](https://github.com/snesmaeili/jamica/actions/workflows/tests.yml)
+[![Docs](https://img.shields.io/github/actions/workflow/status/snesmaeili/jamica/docs.yml?branch=main&label=docs)](https://snesmaeili.github.io/jamica/)
+[![Codecov](https://img.shields.io/codecov/c/github/snesmaeili/jamica)](https://codecov.io/gh/snesmaeili/jamica)
+[![PyPI - Version](https://img.shields.io/pypi/v/jamica.svg)](https://pypi.org/project/jamica/)
+[![conda-forge](https://img.shields.io/conda/vn/conda-forge/jamica.svg)](https://anaconda.org/conda-forge/jamica)
+[![Python Versions](https://img.shields.io/pypi/pyversions/jamica.svg)](https://pypi.org/project/jamica/)
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21817485.svg)](https://doi.org/10.5281/zenodo.21817485)
 
-> **amica** is a native Python implementation of **AMICA (Adaptive Mixture Independent Component Analysis)**, one of the highest-performing ICA algorithms for EEG source separation.
+> **jamica** is a native Python implementation of **AMICA (Adaptive Mixture Independent Component Analysis)**, one of the highest-performing ICA algorithms for EEG source separation.
 
-The canonical implementation is a Fortran program from UCSD, typically driven through MATLAB- or EEGLAB-based workflows. amica provides an open, extensible Python implementation with optional **JAX acceleration**, seamless **MNE-Python integration**, and a modern Python API for reproducible neuroimaging workflows.
+The canonical implementation is a Fortran program from UCSD, typically driven through MATLAB- or EEGLAB-based workflows. jamica provides an open, extensible Python implementation with optional **JAX acceleration**, seamless **MNE-Python integration**, and a modern Python API for reproducible neuroimaging workflows.
 
-> **Status:** amica reproduces the Fortran AMICA 1.7 reference on the tested single-model configurations. Validation scope, the exact reference build used, and known limitations are described under [Validation](#validation).
+> **Status:** jamica reproduces the Fortran AMICA 1.7 reference on the tested single-model configurations. Validation scope, the exact reference build used, and known limitations are described under [Validation](#validation).
 
 ______________________________________________________________________
 
@@ -33,32 +33,32 @@ ______________________________________________________________________
 # Installation
 
 ```bash
-pip install amica
+pip install jamica
 ```
 
 or, from conda-forge:
 
 ```bash
-conda install -c conda-forge amica
+conda install -c conda-forge jamica
 ```
 
-> **Which `amica`?** Install the distribution named `amica`. A separate project,
-> `amica-python`, is an independent implementation of the same algorithm by
-> another author, and it also provides a top-level `amica` module — so the two
-> cannot coexist in one environment. The conda-forge packages are declared
-> mutually exclusive; on PyPI, installing both overwrites files. Run
-> `pip show amica amica-python` to see which one you have.
+> **Renamed from `amica`.** Releases up to 0.1.0 were published as `amica`.
+> That name installed a top-level `amica` module, which collided with
+> `amica-python` — an independent implementation of the same algorithm by
+> another author — so the two could not coexist in one environment. Since
+> 0.2.0 this project installs as `jamica`, and the two can be installed side
+> by side.
 
 The core install depends only on NumPy and SciPy. Everything else is an optional
 extra, so a CPU-only NumPy install stays small:
 
 ```bash
-pip install "amica[jax]"        # JAX backend, JIT-compiled CPU
-pip install "amica[gpu]"        # JAX with CUDA 12 (Linux only)
-pip install "amica[mne]"        # MNE-Python integration, fit_ica()
-pip install "amica[icalabel]"   # ICLabel component classification
-pip install "amica[viz]"        # plotting and density diagnostics
-pip install "amica[all]"        # everything above
+pip install "jamica[jax]"        # JAX backend, JIT-compiled CPU
+pip install "jamica[gpu]"        # JAX with CUDA 12 (Linux only)
+pip install "jamica[mne]"        # MNE-Python integration, fit_ica()
+pip install "jamica[icalabel]"   # ICLabel component classification
+pip install "jamica[viz]"        # plotting and density diagnostics
+pip install "jamica[all]"        # everything above
 ```
 
 ## From source
@@ -66,16 +66,16 @@ pip install "amica[all]"        # everything above
 For development, or to run the test suite:
 
 ```bash
-git clone https://github.com/snesmaeili/amica.git
-cd amica
+git clone https://github.com/snesmaeili/jamica.git
+cd jamica
 pip install -e ".[dev]"
 ```
 
 With `uv`:
 
 ```bash
-git clone https://github.com/snesmaeili/amica.git
-cd amica
+git clone https://github.com/snesmaeili/jamica.git
+cd jamica
 uv venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
 ```
@@ -85,7 +85,7 @@ ______________________________________________________________________
 # Quick Start
 
 ```python
-from amica import Amica, AmicaConfig
+from jamica import Amica, AmicaConfig
 
 config = AmicaConfig(
     max_iter=2000,
@@ -102,7 +102,7 @@ sources = model.transform(data)
 For MNE-Python:
 
 ```python
-from amica import fit_ica
+from jamica import fit_ica
 
 ica = fit_ica(raw)
 
@@ -128,13 +128,13 @@ ______________________________________________________________________
 
 Full documentation, API reference, validation experiments, and tutorials are available at
 
-**https://snesmaeili.github.io/amica/**
+**https://snesmaeili.github.io/jamica/**
 
 ______________________________________________________________________
 
 # Validation
 
-amica has been validated against the **Fortran AMICA 1.7** reference implementation.
+jamica has been validated against the **Fortran AMICA 1.7** reference implementation.
 
 Scope of that validation, stated precisely so it is not over-read:
 
@@ -173,7 +173,7 @@ ______________________________________________________________________
 
 # Citation
 
-If amica contributes to your research, please cite the original AMICA publications.
+If jamica contributes to your research, please cite the original AMICA publications.
 
 Citation metadata is available in
 [CITATION.cff](CITATION.cff).
@@ -182,4 +182,4 @@ ______________________________________________________________________
 
 # License
 
-amica is distributed under the terms of the BSD 3-Clause License.
+jamica is distributed under the terms of the BSD 3-Clause License.

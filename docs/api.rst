@@ -4,17 +4,17 @@
 API Reference
 =============
 
-This page documents the stable public API of :mod:`amica`.
+This page documents the stable public API of :mod:`jamica`.
 
 Most users will interact with one of two interfaces:
 
-* :class:`amica.Amica` for fitting AMICA directly on NumPy arrays.
-* :func:`amica.fit_ica` for MNE-Python workflows.
+* :class:`jamica.Amica` for fitting AMICA directly on NumPy arrays.
+* :func:`jamica.fit_ica` for MNE-Python workflows.
 
 Core API
 ========
 
-.. currentmodule:: amica
+.. currentmodule:: jamica
 
 Classes
 -------
@@ -39,4 +39,4 @@ Functions
 Low-level Solver
 ----------------
 
-.. autofunction:: amica.amica
+.. autofunction:: jamica.amica

@@ -23,8 +23,8 @@ problems most.
 
 Usage::
 
-    python -m amica.benchmark.profile_scaling --axis samples --n-components 30
-    python -m amica.benchmark.profile_scaling --axis components --n-samples 200000
+    python -m jamica.benchmark.profile_scaling --axis samples --n-components 30
+    python -m jamica.benchmark.profile_scaling --axis components --n-samples 200000
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def steady_ms_per_iter(
     n_components: int, n_samples: int, n_mix: int, max_iter: int, chunk_size, seed: int = 0
 ) -> dict:
     """Median per-iteration wall time after compilation has been paid."""
-    from amica import Amica, AmicaConfig
+    from jamica import Amica, AmicaConfig
 
     rng = np.random.default_rng(seed)
     data = rng.normal(size=(n_components, n_components)) @ rng.laplace(
