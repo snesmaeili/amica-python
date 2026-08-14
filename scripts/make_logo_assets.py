@@ -53,23 +53,33 @@ maintenance script, run by hand, not part of the build.
 from __future__ import annotations
 
 import argparse
-import colorsys
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = REPO_ROOT / "docs" / "_static"
 
-# A pixel counts as background if every channel is at least this bright. The
-# master is anti-aliased against white, so the threshold has to sit below 255
-# to catch the near-white fringe, but high enough to leave the pale end of the
-# teal gradient alone.
-WHITE_CUTOFF = 244
+# Coverage below this is treated as nothing there. The master is a JPEG, and
+# JPEG ringing puts a faint skirt of near-white pixels around every stroke;
+# left in, it shows up as speckle once the background is gone. Genuine
+# anti-aliasing this faint is not visually missed.
+NOISE_FLOOR = 0.06
 
-# Above this HSV saturation a pixel is "coloured" and the dark-mode pass leaves
-# it alone. The wordmark is pure greyscale; the artwork is not.
-SATURATION_GUARD = 0.18
+# Above this much chroma -- plain max(rgb) - min(rgb) -- a pixel counts as
+# coloured and the dark-mode pass leaves it alone.
+#
+# Chroma rather than HLS saturation, which this used to use and which is the
+# wrong tool here: saturation divides by lightness, so it is unstable exactly
+# where the wordmark lives. A near-black (10, 10, 30) scores about 0.5
+# saturation and reads as vividly coloured despite being visually black. JPEG
+# chroma subsampling scatters pixels like that through black text, so the
+# saturation test skipped a speckling of them and left holes in the glyphs,
+# most visibly in the M, while half-inverting JAX's dark navy. Absolute chroma
+# does not blow up in the dark and separates black text from the purple, blue
+# and teal artwork cleanly.
+CHROMA_GUARD = 0.20
 
 
 def _load(master: Path) -> Image.Image:
@@ -79,43 +89,54 @@ def _load(master: Path) -> Image.Image:
     return img
 
 
-def _knock_out_white(img: Image.Image) -> Image.Image:
-    """Make the white field transparent, feathering the anti-aliased edge.
+def _unmix_from_white(img: Image.Image) -> Image.Image:
+    """Recover the artwork's own colour and coverage from its white backing.
 
-    A hard alpha cut leaves a pale halo everywhere the artwork meets the
-    background. Scaling alpha by how far the pixel sits below the cutoff keeps
-    the edge smooth instead.
+    The master is flat artwork composited onto white, so each pixel is
+    ``observed = colour * a + 1 * (1 - a)``. Thresholding alpha and keeping the
+    observed colour -- the obvious approach, and the one this used to take --
+    is wrong: it leaves every anti-aliased edge fully opaque in a colour that
+    was mixed with the background. Against white nobody notices, because the
+    mixed colour matches what is behind it. Against anything darker the same
+    pixels read as a pale rim around every stroke, and the dark-mode pass then
+    inverts that rim into a bright halo.
+
+    Solving the equation instead gives back both unknowns. Taking the darkest
+    channel as full coverage, ``a = 1 - min(rgb)``, and the colour follows.
+    Edges then carry the stroke's true colour at partial alpha and composite
+    correctly onto any background.
     """
-    out = img.copy()
-    px = out.load()
-    for y in range(out.height):
-        for x in range(out.width):
-            r, g, b, a = px[x, y]
-            if a == 0:
-                continue
-            floor = min(r, g, b)
-            if floor >= WHITE_CUTOFF:
-                px[x, y] = (r, g, b, 0)
-            elif floor > WHITE_CUTOFF - 24:
-                fade = (WHITE_CUTOFF - floor) / 24
-                px[x, y] = (r, g, b, int(a * fade))
-    return out
+    rgb = np.asarray(img.convert("RGB"), dtype=np.float64) / 255.0
+    a = 1.0 - rgb.min(axis=2)
+    a[a < NOISE_FLOOR] = 0.0
+
+    nonzero = np.where(a > 0, a, 1.0)[..., None]
+    colour = np.clip((rgb - (1.0 - a)[..., None]) / nonzero, 0.0, 1.0)
+
+    out = np.concatenate([colour, a[..., None]], axis=2)
+    return Image.fromarray((out * 255.0).round().astype(np.uint8), "RGBA")
 
 
 def _lighten_greyscale(img: Image.Image) -> Image.Image:
-    """Invert the luminance of near-grey pixels, leaving coloured ones alone."""
-    out = img.copy()
-    px = out.load()
-    for y in range(out.height):
-        for x in range(out.width):
-            r, g, b, a = px[x, y]
-            if a == 0:
-                continue
-            _, light, sat = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
-            if sat <= SATURATION_GUARD and light < 0.6:
-                v = int((1.0 - light) * 255)
-                px[x, y] = (v, v, v, a)
-    return out
+    """Invert the lightness of near-grey pixels, leaving coloured ones alone.
+
+    Runs on unmixed colour, so a half-covered black glyph edge is black at
+    alpha 0.5 rather than opaque grey. It inverts to white at alpha 0.5, which
+    is the correct anti-aliasing for white text, instead of a grey fringe.
+    """
+    arr = np.asarray(img, dtype=np.float64) / 255.0
+    rgb, a = arr[..., :3], arr[..., 3]
+
+    hi, lo = rgb.max(axis=2), rgb.min(axis=2)
+    light = (hi + lo) / 2.0
+    chroma = hi - lo
+
+    grey = (chroma <= CHROMA_GUARD) & (light < 0.6) & (a > 0)
+    out = rgb.copy()
+    out[grey] = (1.0 - light)[grey][..., None]
+
+    merged = np.concatenate([out, a[..., None]], axis=2)
+    return Image.fromarray((merged * 255.0).round().astype(np.uint8), "RGBA")
 
 
 def _emblem(img: Image.Image) -> Image.Image:
@@ -181,7 +202,7 @@ def main() -> None:
     print(f"master: {args.master}")
 
     raw = _load(args.master)
-    light = _knock_out_white(raw)
+    light = _unmix_from_white(raw)
     light = light.crop(light.getbbox())
 
     def save(image: Image.Image, name: str, **kw: object) -> None:
