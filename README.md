@@ -32,7 +32,7 @@ A jam is rarely one fixed mixture, though. Players drop in and out. Someone take
 
 jamica runs that algorithm on JAX, on CPU or GPU, inside the usual Python scientific stack.
 
-> **Status:** jamica reproduces the Fortran AMICA 1.7 reference on the tested single-model configurations. Validation scope, the exact reference build used, and known limitations are described under [Validation](#validation).
+> **Status:** jamica reproduces the Fortran AMICA 1.7 reference on the tested single-model configurations. See [Validation](#validation).
 
 ______________________________________________________________________
 
@@ -158,23 +158,12 @@ ______________________________________________________________________
 
 jamica reproduces the **Fortran AMICA 1.7** reference on single-model fits: final log-likelihoods,
 unmixing matrices and adaptive-density parameters agree closely across `K=1` and `K=3` density terms,
-under both Newton and natural-gradient updates, plus a 100-iteration audit on real EEG.
+under both Newton and natural-gradient updates, and on a 100-iteration audit on real EEG.
 
-Three limits worth knowing before relying on it:
-
-- **The reference was a patched build.** Stock AMICA 1.7 does not converge on these fixtures; three
-  corrections were needed, including a generalized-Gaussian score exponent fix. Comparisons against
-  an unpatched upstream build will not reproduce these numbers. The patched source and its Docker
-  build are public, in [`jamica-benchmark/fortran/`](https://github.com/snesmaeili/jamica-benchmark/tree/main/fortran).
-- **Not covered by the parity fixtures:** multi-model agreement with Fortran, long high-dimensional
-  runs, and likelihood-based sample rejection.
-- **Devices agree in aggregate, not component by component.** Two fits reaching the same likelihood
-  can still differ in individual component subspaces, so check component identity if you move an
-  analysis between CPU and GPU part-way through.
-
-Full protocols, the comparisons against other AMICA implementations and against Picard, extended
-Infomax and FastICA, and every figure and table in the manuscript are in
-**[jamica-benchmark](https://github.com/snesmaeili/jamica-benchmark)**.
+Protocols, the patched reference build, comparisons against other AMICA implementations and against
+Picard, extended Infomax and FastICA, and every figure and table in the manuscript are in
+**[jamica-benchmark](https://github.com/snesmaeili/jamica-benchmark)**. Exact scope is in the
+[documentation](https://snesmaeili.github.io/jamica/explanation.html#numerical-validation).
 
 ______________________________________________________________________
 

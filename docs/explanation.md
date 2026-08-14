@@ -100,9 +100,19 @@ ______________________________________________________________________
 
 ## Numerical validation
 
-jamica has been validated against the Fortran AMICA 1.7 reference implementation on the tested single-model configurations. The reference used was a locally patched build; see the README for the scope of that validation and what it does not cover.
+jamica reproduces the Fortran AMICA 1.7 reference on single-model fits. Final log-likelihoods, unmixing matrices and adaptive-density parameters agree closely across `K=1` and `K=3` density terms, under both Newton and natural-gradient updates, and on a 100-iteration audit on real EEG.
 
-The documentation includes validation experiments, reproducibility analyses, and performance benchmarks demonstrating numerical agreement between the two implementations.
+### Reproducing the parity numbers
+
+The reference was a **patched** AMICA 1.7. Stock 1.7 does not converge on these fixtures; three corrections were required, including a generalized-Gaussian score exponent fix. Comparing against an unpatched upstream build will not reproduce these numbers, so start from the patched source and its Docker build in [`jamica-benchmark/fortran/`](https://github.com/snesmaeili/jamica-benchmark/tree/main/fortran).
+
+### What the parity fixtures cover
+
+They cover single-model fits. Multi-model agreement with Fortran, long high-dimensional runs, and likelihood-based sample rejection are not measured against the reference build; rejection follows the reference procedure, but its equivalence was not verified numerically.
+
+Agreement across devices is close in aggregate rather than component by component. Two fits reaching the same likelihood can still differ in individual component subspaces, so check component identity if you move an analysis between CPU and GPU part-way through.
+
+Protocols, cross-implementation comparisons, and the manuscript's figures and tables are in [jamica-benchmark](https://github.com/snesmaeili/jamica-benchmark).
 
 ______________________________________________________________________
 
