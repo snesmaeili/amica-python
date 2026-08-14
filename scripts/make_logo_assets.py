@@ -216,8 +216,12 @@ def main() -> None:
 
     emblem = _emblem(light)
     mark = emblem.copy()
-    if mark.width > 512:
-        mark = mark.resize((512, 512), Image.LANCZOS)
+    # Cap rather than resize to a fixed size: downscaling a 700px emblem to 512
+    # threw away detail that retina navbars can show, and upscaling a small one
+    # would invent detail that is not in the master. Only shrink, and only when
+    # the emblem is genuinely larger than anything that will be displayed.
+    if mark.width > 1024:
+        mark = mark.resize((1024, 1024), Image.LANCZOS)
     save(mark, "logo-mark.png")
     save(_lighten_greyscale(mark), "logo-mark-dark.png")
     save(

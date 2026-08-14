@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/snesmaeili/jamica/main/docs/_static/logo-dark.png?v=3">
-    <img src="https://raw.githubusercontent.com/snesmaeili/jamica/main/docs/_static/logo.png?v=3" alt="jamica - Adaptive Mixture Independent Component Analysis, powered by JAX" width="420">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/snesmaeili/jamica/main/docs/_static/logo-dark.png?v=4">
+    <img src="https://raw.githubusercontent.com/snesmaeili/jamica/main/docs/_static/logo.png?v=4" alt="jamica - Adaptive Mixture Independent Component Analysis, powered by JAX" width="420">
   </picture>
 </p>
 
