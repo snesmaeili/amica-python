@@ -176,6 +176,15 @@ Please:
 
 Pull requests should target the **main** branch.
 
+## AI assistance
+
+You are welcome to use AI coding assistants. Two requests: understand what you
+are submitting well enough to defend it in review, and note the assistance with
+a `Co-authored-by:` trailer on the commit so the record stays accurate.
+
+[AI_USAGE.md](AI_USAGE.md) describes how assistance has been used in this
+project and what it does not change about how the package is verified.
+
 ______________________________________________________________________
 
 # Bug Reports
