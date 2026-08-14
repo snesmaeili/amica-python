@@ -1,3 +1,10 @@
+```{raw} html
+<p align="center">
+  <img src="_static/logo.png" class="only-light" alt="jamica - Adaptive Mixture Independent Component Analysis, powered by JAX" width="420">
+  <img src="_static/logo-dark.png" class="only-dark" alt="jamica - Adaptive Mixture Independent Component Analysis, powered by JAX" width="420">
+</p>
+```
+
 # jamica
 
 **Native Python AMICA for scientific EEG workflows.**

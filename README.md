@@ -1,4 +1,11 @@
-# jamica
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/snesmaeili/jamica/main/docs/_static/logo-dark.png">
+    <img src="https://raw.githubusercontent.com/snesmaeili/jamica/main/docs/_static/logo.png" alt="jamica - Adaptive Mixture Independent Component Analysis, powered by JAX" width="420">
+  </picture>
+</p>
+
+<p align="center"><strong>JAX-accelerated Adaptive Mixture Independent Component Analysis for Python.</strong></p>
 
 [![CI](https://img.shields.io/github/actions/workflow/status/snesmaeili/jamica/tests.yml?branch=main&label=CI)](https://github.com/snesmaeili/jamica/actions/workflows/tests.yml)
 [![Docs](https://img.shields.io/github/actions/workflow/status/snesmaeili/jamica/docs.yml?branch=main&label=docs)](https://snesmaeili.github.io/jamica/)
@@ -9,9 +16,21 @@
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21817485.svg)](https://doi.org/10.5281/zenodo.21817485)
 
-> **jamica** is a native Python implementation of **AMICA (Adaptive Mixture Independent Component Analysis)**, one of the highest-performing ICA algorithms for EEG source separation.
+jamica is a JAX implementation of **AMICA** (Adaptive Mixture Independent Component Analysis), an algorithm for blind source separation. It is aimed mainly at EEG.
 
-The canonical implementation is a Fortran program from UCSD, typically driven through MATLAB- or EEGLAB-based workflows. jamica provides an open, extensible Python implementation with optional **JAX acceleration**, seamless **MNE-Python integration**, and a modern Python API for reproducible neuroimaging workflows.
+AMICA is one of the strongest methods in the ICA family for EEG decomposition. The original implementation is a Fortran program from UCSD, usually run through MATLAB or EEGLAB. jamica rewrites it in Python on top of JAX, so the same code JIT-compiles and runs on either CPU or GPU, and it works directly with **MNE-Python**.
+
+______________________________________________________________________
+
+# Why jamica?
+
+JAX + AMICA = jamica. The name also describes the problem AMICA solves.
+
+Record a jam session with a few microphones. Each one picks up a different blend of the same players. Getting the individual instruments back out of those recordings is blind source separation, which is what ICA does for EEG: electrodes pick up mixtures of cortical, muscular and ocular activity, and the job is to pull them apart again.
+
+A jam is rarely one fixed mixture, though. Players drop in and out. Someone takes a solo. The statistics of what the microphones hear keep shifting. AMICA handles this by fitting several mixture models instead of one, and by learning the shape of each source distribution rather than assuming it. That makes it a good match for data a single stationary ICA model does not describe well.
+
+jamica runs that algorithm on JAX, on CPU or GPU, inside the usual Python scientific stack.
 
 > **Status:** jamica reproduces the Fortran AMICA 1.7 reference on the tested single-model configurations. Validation scope, the exact reference build used, and known limitations are described under [Validation](#validation).
 
@@ -19,9 +38,9 @@ ______________________________________________________________________
 
 # Highlights
 
-- Native Python implementation of the AMICA algorithm
+- The AMICA algorithm in Python, JIT-compiled through **JAX**
+- Runs on CPU or GPU without changing your code
 - Numerical agreement with the Fortran AMICA 1.7 reference on the tested configurations
-- Optional **JAX** backend for CPU and GPU acceleration
 - Native integration with **MNE-Python**
 - Support for **multi-model AMICA**
 - Modern scientific Python API
@@ -33,13 +52,13 @@ ______________________________________________________________________
 # Installation
 
 ```bash
-pip install jamica
+pip install "jamica[jax]"
 ```
 
 or, from conda-forge:
 
 ```bash
-conda install -c conda-forge jamica
+conda install -c conda-forge jamica jax
 ```
 
 > **Renamed from `amica`.** Releases up to 0.1.0 were published as `amica`.
@@ -49,12 +68,15 @@ conda install -c conda-forge jamica
 > 0.2.0 this project installs as `jamica`, and the two can be installed side
 > by side.
 
-The core install depends only on NumPy and SciPy. Everything else is an optional
-extra, so a CPU-only NumPy install stays small:
+For NVIDIA GPUs, take the CUDA build of JAX instead:
 
 ```bash
-pip install "jamica[jax]"        # JAX backend, JIT-compiled CPU
 pip install "jamica[gpu]"        # JAX with CUDA 12 (Linux only)
+```
+
+The other extras are separate, so you only install what you need:
+
+```bash
 pip install "jamica[mne]"        # MNE-Python integration, fit_ica()
 pip install "jamica[icalabel]"   # ICLabel component classification
 pip install "jamica[viz]"        # plotting and density diagnostics
@@ -150,9 +172,9 @@ Scope of that validation, stated precisely so it is not over-read:
   optimisation runs, and likelihood-based sample rejection. Rejection follows the reference procedure
   but its equivalence was not measured against the reference build.
 
-Backend agreement (JAX-GPU / JAX-CPU / NumPy-CPU) is close in aggregate, but component-level agreement
-is not guaranteed on every recording: fits that reach the same likelihood can still differ in
-individual component subspaces. Check component identity if you switch backends mid-analysis.
+Agreement across devices is close in aggregate, but component-level agreement is not guaranteed on
+every recording: fits that reach the same likelihood can still differ in individual component
+subspaces. Check component identity if you move an analysis between CPU and GPU part-way through.
 
 The documentation contains:
 
