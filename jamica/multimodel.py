@@ -301,7 +301,7 @@ def add_stats_mm(a: MMChunkStats, b: MMChunkStats) -> MMChunkStats:
 
 @partial(
     jax.jit,
-    static_argnames=["do_newton", "do_mean", "doscaling"],
+    static_argnames=["do_newton", "update_c", "doscaling"],
 )
 def m_step_mm(
     totals: MMChunkStats,
@@ -323,7 +323,7 @@ def m_step_mm(
     minrho,
     maxrho,
     do_newton: bool,
-    do_mean: bool,
+    update_c: bool,
     doscaling: bool,
 ):
     """Multimodel M-step: per-model parameter update (vmapped) + gamma update.
@@ -396,7 +396,7 @@ def m_step_mm(
         )
         rho_new = apply_rho_update_from_stats(rho_h, rn_h, rs_h, rholrate, minrho, maxrho)
 
-        c_new = ds_h / safe_Nv if do_mean else c_h
+        c_new = ds_h / safe_Nv if update_c else c_h
 
         if doscaling:
             col_norms = jnp.linalg.norm(A_new, axis=0)

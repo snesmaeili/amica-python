@@ -96,7 +96,7 @@ def _reject_threshold(sample_lls, good_mask, rejsig):
     donate_argnums=(0, 1, 2, 3, 4, 5, 6),
     static_argnames=[
         "do_newton",
-        "do_mean",
+        "update_c",
         "do_sphere",
         "doscaling",
         "update_alpha",
@@ -130,7 +130,7 @@ def _amica_step(
     maxrho: float,
     # Config flags (static)
     do_newton: bool,
-    do_mean: bool,
+    update_c: bool,
     do_sphere: bool,
     doscaling: bool,
     update_alpha: bool,
@@ -180,7 +180,7 @@ def _amica_step(
         Maximum allowed shape parameter.
     do_newton : bool
         Whether to apply Newton correction.
-    do_mean : bool
+    update_c : bool
         Whether to center the data via model centers.
     do_sphere : bool
         Whether to use sphered data (affects log-likelihood).
@@ -300,7 +300,7 @@ def _amica_step(
     )
 
     # 9. Update model center.
-    c_new = jnp.mean(data_white, axis=1) if do_mean else c
+    c_new = jnp.mean(data_white, axis=1) if update_c else c
 
     # 10. Scaling
     if doscaling:
@@ -349,7 +349,7 @@ def _amica_step_chunked(
     minrho,
     maxrho,
     do_newton,
-    do_mean,
+    update_c,
     do_sphere,
     doscaling,
     update_alpha,
@@ -409,7 +409,7 @@ def _amica_step_chunked(
         Maximum allowed shape parameter.
     do_newton : bool
         Whether to apply Newton correction.
-    do_mean : bool
+    update_c : bool
         Whether to center the data via model centers.
     do_sphere : bool
         Whether to use sphered data (affects log-likelihood).
@@ -557,7 +557,7 @@ def _amica_step_chunked(
         rho_new = rho
 
     # --- c update ---
-    c_new = data_sum_total / n_total if do_mean else c
+    c_new = data_sum_total / n_total if update_c else c
 
     # --- Column scaling ---
     if doscaling:
@@ -604,7 +604,7 @@ def _amica_step_chunked(
     donate_argnums=(0, 1, 2, 3, 4, 5, 6),
     static_argnames=[
         "do_newton",
-        "do_mean",
+        "update_c",
         "do_sphere",
         "doscaling",
         "update_alpha",
@@ -634,7 +634,7 @@ def _amica_step_fused(
     minrho,
     maxrho,
     do_newton,
-    do_mean,
+    update_c,
     do_sphere,
     doscaling,
     update_alpha,
@@ -769,7 +769,7 @@ def _amica_step_fused(
     )
 
     # --- c update ---
-    c_new = data_sum_total / n_total if do_mean else c
+    c_new = data_sum_total / n_total if update_c else c
 
     # --- Column scaling (Stage 3B row-scaled inverse: no 2nd pinv) ---
     if doscaling:
@@ -825,7 +825,7 @@ def _amica_step_multimodel(
     minrho,
     maxrho,
     do_newton,
-    do_mean,
+    update_c,
     do_sphere,
     doscaling,
     update_alpha,
@@ -868,7 +868,7 @@ def _amica_step_multimodel(
         minrho,
         maxrho,
         do_newton,
-        do_mean,
+        update_c,
         doscaling,
     )
 
@@ -893,7 +893,7 @@ def _amica_step_multimodel_chunked(
     minrho,
     maxrho,
     do_newton,
-    do_mean,
+    update_c,
     do_sphere,
     doscaling,
     update_alpha,
@@ -956,7 +956,7 @@ def _amica_step_multimodel_chunked(
         minrho,
         maxrho,
         do_newton,
-        do_mean,
+        update_c,
         doscaling,
     )
 
@@ -1550,7 +1550,7 @@ class Amica:
 
         # Convert config flags to static arguments once
         do_newton_static = self.config.do_newton
-        do_mean_static = self.config.do_mean
+        update_c_static = self.config.resolve_update_c()
         do_sphere_static = self.config.do_sphere
         doscaling_static = self.config.doscaling
         update_alpha_static = self.config.update_alpha
@@ -1717,7 +1717,7 @@ class Amica:
                 self.config.maxrho,
                 # Config flags (static)
                 do_newton_static,
-                do_mean_static,
+                update_c_static,
                 do_sphere_static,
                 doscaling_static,
                 update_alpha_static,

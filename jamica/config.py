@@ -95,6 +95,19 @@ class AmicaConfig:
         Whether to update scale parameters. Default is True.
     update_rho : bool
         Whether to update shape parameters. Default is True.
+    update_c : bool | None
+        Whether the EM step re-estimates the model centres ``c``. ``None``
+        (default) resolves to ``do_mean`` for a single model and to ``True``
+        for a mixture; see :meth:`resolve_update_c`.
+
+        This is deliberately separate from ``do_mean``. ``do_mean`` asks
+        whether preprocessing removes the global data mean; ``update_c`` asks
+        whether each model re-estimates its own centre during EM. For
+        ``num_models > 1`` the centres are mixture parameters that distinguish
+        the models and are generally non-zero even on globally centred data,
+        so tying them to ``do_mean`` would freeze them at their zero init
+        whenever the caller centred the data itself -- which is exactly what
+        the MNE integration does.
     """
 
     # Model structure
@@ -169,6 +182,7 @@ class AmicaConfig:
     update_mu: bool = True
     update_beta: bool = True
     update_rho: bool = True
+    update_c: bool | None = None
 
     # Time-axis blocking for the E-step accumulator.
     #   "auto"   — default. Single-model CPU fits block at a size measured to be
@@ -189,6 +203,28 @@ class AmicaConfig:
     #               oracle / for exact reproduction of pre-fusion results.
     # Only affects the full-batch path; the chunked path is always fused.
     estep: Literal["auto", "fused", "classic"] = "auto"
+
+    def resolve_update_c(self) -> bool:
+        """Whether the EM step should re-estimate the model centres.
+
+        ``update_c=None`` means "choose by model count":
+
+        - ``num_models == 1`` -> follow ``do_mean``. A single model's centre is
+          the data mean, so when preprocessing already removed it the centre
+          stays at zero, and freezing it preserves the established
+          single-model behaviour (including checkpoint bit-exactness, since
+          ``c`` is not restored from ``init_params``).
+        - ``num_models > 1`` -> always update. The per-model centres are
+          mixture parameters, not the global mean.
+
+        Returns
+        -------
+        bool
+            Resolved flag passed to the M-step kernels.
+        """
+        if self.update_c is not None:
+            return bool(self.update_c)
+        return bool(self.do_mean) if self.num_models == 1 else True
 
     def __post_init__(self):
         """Validate configuration."""
