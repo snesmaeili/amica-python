@@ -14,6 +14,7 @@ References
        (2008). Newton Method for the ICA Mixture Model. ICASSP 2008.
 """
 
+from .amica_ica import AmicaICA
 from .config import AmicaConfig
 from .metrics import (
     mixture_entropy,
@@ -37,6 +38,7 @@ from .viz import (
 __all__ = [
     "Amica",
     "AmicaConfig",
+    "AmicaICA",
     "AmicaResult",
     "amica",
     "fit_ica",
