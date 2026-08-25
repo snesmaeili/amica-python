@@ -1,0 +1,1 @@
+The documentation build works again. `docs/contributing.md` includes `CONTRIBUTING.md`, so its document-relative link to `AI_USAGE.md` was resolved against `docs/` rather than the repository root and raised a warning, which the build treats as an error. The link is now absolute, which resolves for both GitHub and Sphinx.
