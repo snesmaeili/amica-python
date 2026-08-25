@@ -14,7 +14,7 @@ References
        (2008). Newton Method for the ICA Mixture Model. ICASSP 2008.
 """
 
-from .amica_ica import AmicaICA
+from .amica_ica import AmicaICA, read_amica_ica
 from .config import AmicaConfig
 from .metrics import (
     mixture_entropy,
@@ -52,6 +52,7 @@ __all__ = [
     "plot_parameter_summary",
     "plot_shape_parameters",
     "plot_source_densities",
+    "read_amica_ica",
     "rho_mean",
     "rho_range",
     "source_kurtosis",

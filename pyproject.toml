@@ -53,6 +53,12 @@ mne = [
   "mne>=1.0",
 ]
 
+# AmicaICA.save() writes HDF5 through MNE's h5io helper, the same one
+# EOGRegression uses. Optional in MNE, so optional here too.
+hdf5 = [
+  "h5io",
+]
+
 icalabel = [
   "mne-icalabel>=0.4",
   "onnxruntime",
@@ -79,6 +85,9 @@ test = [
   # Two memory tests in test_amica.py skip without it, quietly.
   "psutil",
   "python-picard",
+  # The AmicaICA save/load tests need it; without it they skip and the
+  # persistence path ships untested.
+  "h5io",
 ]
 
 docs = [
@@ -110,7 +119,7 @@ release = [
 ]
 
 all = [
-  "jamica[jax,mne,icalabel,viz,test,docs]",
+  "jamica[jax,mne,hdf5,icalabel,viz,test,docs]",
 ]
 
 [project.urls]

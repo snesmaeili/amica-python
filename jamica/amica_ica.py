@@ -19,7 +19,7 @@ import numpy as np
 
 from .mne_integration import _prepare_mne_input
 
-__all__ = ["AmicaICA"]
+__all__ = ["AmicaICA", "read_amica_ica"]
 
 
 def _fold_center_into_pca_mean(pca_mean, pca_components, comp_stds, c_h, n_comp):
@@ -152,6 +152,7 @@ class AmicaICA:
         AmicaICA
             The fitted instance.
         """
+        import mne
         from mne.io import BaseRaw
 
         from .config import AmicaConfig
@@ -204,7 +205,8 @@ class AmicaICA:
         # Build every child eagerly and cache: interactive MNE review mutates
         # ICA.exclude, so handing back a fresh object per access would silently
         # discard the user's work.
-        self._models = [self._build_child(inst, h, prep) for h in range(self.n_models_)]
+        picked_info = mne.pick_info(inst.info, prep.picks_idx)
+        self._models = [self._build_child(picked_info, h, prep) for h in range(self.n_models_)]
 
         # Posteriors are reported on the ORIGINAL sampling grid, not the grid the
         # optimiser happened to see. They are re-evaluated from the fitted model
@@ -218,7 +220,7 @@ class AmicaICA:
     # ------------------------------------------------------------------
     # children
     # ------------------------------------------------------------------
-    def _build_child(self, inst, model_index, prep):
+    def _build_child(self, picked_info, model_index, prep):
         """Materialise model ``model_index`` as an ordinary ``ICA``.
 
         Constructed by assignment rather than by calling ``ICA.fit()``: MNE's
@@ -227,7 +229,6 @@ class AmicaICA:
         parameters (``alpha`` / ``mu`` / ``beta`` / ``rho``) in
         ``amica_result_``.
         """
-        import mne
         from mne.preprocessing import ICA
 
         n_comp = prep.n_comp
@@ -237,7 +238,7 @@ class AmicaICA:
         # MNE validates ``method`` at __init__; set a known value and override.
         ica = ICA(n_components=n_comp, method="infomax", max_iter=self.max_iter)
 
-        ica.info = mne.pick_info(inst.info, prep.picks_idx)
+        ica.info = picked_info.copy()
         ica.ch_names = list(self.ch_names)
         ica.pre_whitener_ = prep.pre_whitener
         ica.pca_components_ = prep.pca_components
@@ -431,6 +432,130 @@ class AmicaICA:
             raise IndexError(f"model_idx {idx} out of range [0, {self.n_models_}).")
         return self._models[idx].apply(inst, **kwargs)
 
+    # ------------------------------------------------------------------
+    # persistence
+    # ------------------------------------------------------------------
+    def save(self, fname, overwrite=False):
+        """Write the whole fit -- every model plus the mixture -- to HDF5.
+
+        A FIF file stores one unmixing matrix, so it cannot hold a mixture on
+        its own. HDF5 is used here for the same reason
+        :class:`~mne.preprocessing.EOGRegression` uses it, and through the same
+        MNE helper. Pair this with :meth:`export_model_fifs` when the
+        individual models should also be readable without jamica installed.
+
+        Parameters
+        ----------
+        fname : path-like
+            Destination, conventionally ending in ``.h5``.
+        overwrite : bool
+            Overwrite an existing file.
+        """
+        from mne.utils import _check_fname, _import_h5io_funcs, _validate_type
+
+        if self._models is None:
+            raise RuntimeError("AmicaICA is not fitted; call fit() first.")
+        _, write_hdf5 = _import_h5io_funcs()
+        _validate_type(fname, "path-like", "fname")
+        fname = _check_fname(fname, overwrite=overwrite, name="fname")
+        write_hdf5(fname, self._as_state(), overwrite=overwrite, title="jamica")
+
+    def _as_state(self):
+        """Everything needed to rebuild this object, as plain containers."""
+        import dataclasses
+
+        prep = self._prep
+        return {
+            "jamica_format": 1,
+            "params": {
+                "n_models": self.n_models,
+                "n_components": self.n_components,
+                "max_iter": self.max_iter,
+                "num_mix": self.num_mix,
+                "random_state": self.random_state,
+                "reject": self.reject,
+                "flat": self.flat,
+                "decim": self.decim,
+                "fit_params": self.fit_params,
+            },
+            "fitted": {
+                "n_models_": int(self.n_models_),
+                "n_components_": int(self.n_components_),
+                "n_iter_": int(self.n_iter_),
+                "ch_names": list(self.ch_names),
+                "inst_kind": self._inst_kind,
+                "model_weights_": np.asarray(self.model_weights_),
+                "model_posteriors_": np.asarray(self.model_posteriors_),
+                "fit_sample_mask_": np.asarray(self.fit_sample_mask_),
+                "W_all": np.asarray(self._W_all),
+                "c_all": np.asarray(self._c_all),
+            },
+            # The picked Info, taken from a child so it matches exactly what
+            # the children were built with.
+            "info": self._models[0].info.copy(),
+            "prep": {
+                "pre_whitener": np.asarray(prep.pre_whitener),
+                "pca_components": np.asarray(prep.pca_components),
+                "pca_mean": np.asarray(prep.pca_mean),
+                "pca_explained_variance": np.asarray(prep.pca_explained_variance),
+                "comp_stds": np.asarray(prep.comp_stds),
+                "n_comp": int(prep.n_comp),
+                "picks_idx": np.asarray(prep.picks_idx),
+                "n_samples": int(prep.n_samples),
+                "fit_sample_mask": (
+                    None if prep.fit_sample_mask is None else np.asarray(prep.fit_sample_mask)
+                ),
+                "decim": prep.decim,
+            },
+            "result": dataclasses.asdict(self.amica_result_),
+            "exclude": [list(m.exclude) for m in self._models],
+            "labels": [dict(m.labels_) for m in self._models],
+        }
+
+    def export_model_fifs(self, fname, overwrite=False):
+        """Write each model as an ordinary ``-ica.fif``.
+
+        These are plain MNE ICA files: they open with
+        :func:`mne.preprocessing.read_ica` on a machine that has never
+        installed jamica, so a decomposition never becomes readable only
+        through this package. What they cannot carry is the mixture itself,
+        the priors and the posterior time course, which is what :meth:`save`
+        is for.
+
+        Parameters
+        ----------
+        fname : path-like
+            Template ending in ``-ica.fif``. The model index is inserted before
+            the suffix, so ``sub-01-ica.fif`` yields ``sub-01-model-0-ica.fif``
+            and so on.
+        overwrite : bool
+            Overwrite existing files.
+
+        Returns
+        -------
+        list of pathlib.Path
+            The files written, in model order.
+        """
+        import pathlib
+
+        if self._models is None:
+            raise RuntimeError("AmicaICA is not fitted; call fit() first.")
+        fname = pathlib.Path(fname)
+        name = fname.name
+        for suffix in ("-ica.fif.gz", "-ica.fif"):
+            if name.endswith(suffix):
+                stem = name[: -len(suffix)]
+                break
+        else:
+            raise ValueError(f"fname must end in '-ica.fif' for MNE to read it back, got {name!r}.")
+
+        written = []
+        for h, model in enumerate(self._models):
+            out = fname.with_name(f"{stem}-model-{h}{suffix}")
+            model.save(out, overwrite=overwrite)
+            written.append(out)
+        return written
+
     def __repr__(self):
         if self._models is None:
             return f"<AmicaICA (unfitted, n_models={self.n_models})>"
@@ -438,3 +563,74 @@ class AmicaICA:
             f"<AmicaICA | {self.n_models_} models, {self.n_components_} components, "
             f"{self.n_iter_} iterations>"
         )
+
+
+def read_amica_ica(fname):
+    """Read an :class:`AmicaICA` written by :meth:`AmicaICA.save`.
+
+    Parameters
+    ----------
+    fname : path-like
+        The ``.h5`` file to read.
+
+    Returns
+    -------
+    AmicaICA
+        The restored fit, with its per-model :class:`~mne.preprocessing.ICA`
+        views rebuilt and each child's ``exclude`` / ``labels_`` preserved.
+    """
+    import mne
+    from mne.utils import _check_fname, _import_h5io_funcs, _validate_type
+
+    from .mne_integration import _MnePrep
+    from .solver import AmicaResult
+
+    read_hdf5, _ = _import_h5io_funcs()
+    _validate_type(fname, "path-like", "fname")
+    fname = _check_fname(fname, overwrite="read", must_exist=True, name="fname")
+    state = read_hdf5(fname, title="jamica")
+
+    fmt = state.get("jamica_format")
+    if fmt != 1:
+        raise ValueError(f"unsupported jamica file format {fmt!r}; expected 1.")
+
+    out = AmicaICA(**state["params"])
+    fitted = state["fitted"]
+    prep_d = state["prep"]
+
+    # h5io hands an Info back as a plain dict, and MNE's own helpers reject
+    # that, so put it back into a real Info before anything is built from it.
+    info = state["info"]
+    if not isinstance(info, mne.Info):
+        info = mne.Info(**info)
+
+    out._prep = _MnePrep(
+        data_for_amica=None,  # fit data is not stored; not needed to rebuild views
+        pre_whitener=prep_d["pre_whitener"],
+        pca_components=prep_d["pca_components"],
+        pca_mean=prep_d["pca_mean"],
+        pca_explained_variance=prep_d["pca_explained_variance"],
+        comp_stds=prep_d["comp_stds"],
+        n_comp=int(prep_d["n_comp"]),
+        picks_idx=prep_d["picks_idx"],
+        n_samples=int(prep_d["n_samples"]),
+        fit_sample_mask=prep_d["fit_sample_mask"],
+        decim=prep_d["decim"],
+    )
+    out.amica_result_ = AmicaResult(**state["result"])
+    out._inst_kind = fitted["inst_kind"]
+    out.n_models_ = int(fitted["n_models_"])
+    out.n_components_ = int(fitted["n_components_"])
+    out.n_iter_ = int(fitted["n_iter_"])
+    out.ch_names = list(fitted["ch_names"])
+    out.model_weights_ = fitted["model_weights_"]
+    out.model_posteriors_ = fitted["model_posteriors_"]
+    out.fit_sample_mask_ = fitted["fit_sample_mask_"]
+    out._W_all = fitted["W_all"]
+    out._c_all = fitted["c_all"]
+
+    out._models = [out._build_child(info, h, out._prep) for h in range(out.n_models_)]
+    for model, exclude, labels in zip(out._models, state["exclude"], state["labels"], strict=False):
+        model.exclude = list(exclude)
+        model.labels_ = dict(labels)
+    return out

@@ -483,3 +483,121 @@ def test_child_state_isolation_shared_vs_model_specific(fitted_mm):
         # the fixture is module-scoped; leave it as found
         a.pca_mean_, a.unmixing_matrix_ = a_mean, a_unmix
         a.exclude, a.labels_ = [], {}
+
+
+# ---------------------------------------------------------------------------
+# Persistence: HDF5 container + per-model FIF export
+# ---------------------------------------------------------------------------
+
+h5io = pytest.importorskip("h5io")
+
+from jamica import read_amica_ica  # noqa: E402
+
+
+def test_save_load_roundtrip(fitted_mm, tmp_path):
+    """Everything that defines the fit survives a save/load cycle."""
+    amica, _raw = fitted_mm
+    fname = tmp_path / "fit.h5"
+    amica.save(fname)
+    back = read_amica_ica(fname)
+
+    assert back.n_models_ == amica.n_models_
+    assert back.n_components_ == amica.n_components_
+    assert back.n_iter_ == amica.n_iter_
+    assert back.ch_names == amica.ch_names
+    assert np.allclose(back.model_weights_, amica.model_weights_)
+    assert np.allclose(back.model_posteriors_, amica.model_posteriors_, equal_nan=True)
+    assert np.array_equal(back.fit_sample_mask_, amica.fit_sample_mask_)
+    assert np.allclose(back._W_all, amica._W_all)
+    assert np.allclose(back._c_all, amica._c_all)
+
+
+def test_loaded_children_produce_identical_sources(fitted_mm, tmp_path):
+    """A restored model must transform data exactly as the original did."""
+    amica, raw = fitted_mm
+    fname = tmp_path / "fit.h5"
+    amica.save(fname)
+    back = read_amica_ica(fname)
+
+    for h in range(amica.n_models_):
+        want = amica.models_[h].get_sources(raw).get_data()
+        got = back.models_[h].get_sources(raw).get_data()
+        assert np.allclose(got, want, rtol=RTOL_SOURCES, atol=ATOL_SOURCES)
+        # the per-model centre fold must survive too
+        assert np.allclose(back.models_[h].pca_mean_, amica.models_[h].pca_mean_)
+
+
+def test_save_load_preserves_review_state(tmp_path):
+    """exclude / labels_ set during review are part of the fit, not scratch."""
+    raw = _make_raw(seed=31)
+    amica = AmicaICA(n_models=2, n_components=4, max_iter=40, random_state=0).fit(raw)
+    amica.models_[0].exclude = [1, 3]
+    amica.models_[1].labels_["eog"] = [0]
+
+    fname = tmp_path / "fit.h5"
+    amica.save(fname)
+    back = read_amica_ica(fname)
+
+    assert back.models_[0].exclude == [1, 3]
+    assert back.models_[1].labels_ == {"eog": [0]}
+    assert back.models_[1].exclude == []
+
+
+def test_save_refuses_to_clobber(fitted_mm, tmp_path):
+    amica, _raw = fitted_mm
+    fname = tmp_path / "fit.h5"
+    amica.save(fname)
+    with pytest.raises(FileExistsError):
+        amica.save(fname)
+    amica.save(fname, overwrite=True)
+
+
+def test_save_before_fit_raises(tmp_path):
+    with pytest.raises(RuntimeError, match="not fitted"):
+        AmicaICA(n_models=2).save(tmp_path / "x.h5")
+
+
+def test_export_model_fifs_readable_by_plain_mne(fitted_mm, tmp_path):
+    """The exported files must be ordinary MNE ICA objects.
+
+    Read back through ``mne.preprocessing.read_ica`` only -- nothing from
+    jamica is involved -- so a decomposition never becomes readable solely
+    through this package.
+    """
+    amica, raw = fitted_mm
+    written = amica.export_model_fifs(tmp_path / "sub-01-ica.fif")
+
+    assert len(written) == amica.n_models_
+    assert [p.name for p in written] == [
+        f"sub-01-model-{h}-ica.fif" for h in range(amica.n_models_)
+    ]
+
+    for h, path in enumerate(written):
+        loaded = mne.preprocessing.read_ica(path, verbose="ERROR")
+        assert isinstance(loaded, mne.preprocessing.ICA)
+        assert loaded.n_components_ == amica.n_components_
+        want = amica.models_[h].get_sources(raw).get_data()
+        got = loaded.get_sources(raw).get_data()
+        assert np.allclose(got, want, rtol=1e-6, atol=1e-10)
+
+
+def test_export_model_fifs_requires_ica_suffix(fitted_mm, tmp_path):
+    """MNE refuses to read a file that is not named -ica.fif, so fail early."""
+    amica, _raw = fitted_mm
+    with pytest.raises(ValueError, match=r"-ica\.fif"):
+        amica.export_model_fifs(tmp_path / "wrong-name.fif")
+
+
+def test_rejects_unknown_file_format(fitted_mm, tmp_path):
+    """A file from a future format version must fail loudly, not half-load."""
+    amica, _raw = fitted_mm
+    fname = tmp_path / "fit.h5"
+    amica.save(fname)
+
+    state = amica._as_state()
+    state["jamica_format"] = 99
+    bogus = tmp_path / "future.h5"
+    h5io.write_hdf5(bogus, state, overwrite=True, title="jamica")
+
+    with pytest.raises(ValueError, match="format"):
+        read_amica_ica(bogus)
