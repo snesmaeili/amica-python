@@ -528,3 +528,88 @@ def test_solver_forwards_chunk_size_to_rejection_loglik(monkeypatch):
     assert seen["chunk_size"] == 64, (
         f"solver forwarded chunk_size={seen['chunk_size']!r}; expected 64"
     )
+
+
+# ---------------------------------------------------------------------------
+# Model-centre update semantics (do_mean vs update_c)
+#
+# ``do_mean`` controls whether preprocessing removes the GLOBAL data mean.
+# Whether the EM step re-estimates each model's CENTRE is a separate question:
+# for a mixture, the per-model centres are part of what distinguishes the
+# models and are generally non-zero even on globally centred data.
+# ---------------------------------------------------------------------------
+
+
+def _two_cluster_data(rng, n=3, tseg=1500, offset=4.0):
+    """Two Laplace clusters with opposite mean offsets; global mean ~ 0.
+
+    Mimics the MNE path, which centres and whitens externally and therefore
+    fits with ``do_mean=False`` / ``do_sphere=False``.
+    """
+    u = np.zeros(n)
+    u[0] = offset
+    A1 = rng.standard_normal((n, n))
+    A2 = rng.standard_normal((n, n))
+    X1 = A1 @ rng.laplace(size=(n, tseg)) + u[:, None]
+    X2 = A2 @ rng.laplace(size=(n, tseg)) - u[:, None]
+    X = np.concatenate([X1, X2], axis=1)
+    X = X - X.mean(axis=1, keepdims=True)  # external centring, as MNE does
+    return X
+
+
+def test_multimodel_learns_distinct_centers_on_externally_centered_data():
+    """M>1 must still learn per-model centres when the mean was removed outside.
+
+    Regression test: the EM centre update used to be gated on ``do_mean``, so
+    the MNE path (``do_mean=False``) froze every model centre at its zero init
+    and the models could only differ by their unmixing matrix.
+    """
+    from jamica import Amica, AmicaConfig
+
+    rng = _rng(0)
+    X = _two_cluster_data(rng)
+
+    cfg = AmicaConfig(
+        num_models=2,
+        max_iter=150,
+        num_mix_comps=2,
+        do_sphere=False,
+        do_mean=False,
+    )
+    res = Amica(cfg, random_state=0).fit(X)
+
+    c = np.asarray(res.c_)
+    assert c.shape == (2, X.shape[0])
+    assert np.any(np.abs(c) > 1e-6), f"all model centres frozen at init: {c}"
+    sep = float(np.linalg.norm(c[0] - c[1]))
+    assert sep > 1e-3, f"model centres not distinct (separation {sep:.3e})"
+
+
+def test_single_model_center_frozen_when_do_mean_false():
+    """M=1 with ``do_mean=False`` keeps c at its zero init.
+
+    Guards the existing single-model contract, which the checkpoint-resume
+    bit-exactness test relies on (c is not restored by ``init_params``).
+    """
+    from jamica import Amica, AmicaConfig
+
+    rng = _rng(1)
+    X = rng.laplace(size=(3, 1200)) + np.array([5.0, -2.0, 1.0])[:, None]
+
+    cfg = AmicaConfig(num_models=1, max_iter=30, num_mix_comps=2, do_sphere=False, do_mean=False)
+    res = Amica(cfg, random_state=0).fit(X)
+
+    assert np.allclose(np.asarray(res.c_), 0.0), "single-model centre must stay frozen"
+
+
+def test_single_model_center_tracks_data_mean_when_do_mean_true():
+    """M=1 with ``do_mean=True`` leaves c ~ 0 because preprocessing centred the data."""
+    from jamica import Amica, AmicaConfig
+
+    rng = _rng(2)
+    X = rng.laplace(size=(3, 1200)) + np.array([5.0, -2.0, 1.0])[:, None]
+
+    cfg = AmicaConfig(num_models=1, max_iter=30, num_mix_comps=2, do_sphere=False, do_mean=True)
+    res = Amica(cfg, random_state=0).fit(X)
+
+    assert np.allclose(np.asarray(res.c_), 0.0, atol=1e-6)

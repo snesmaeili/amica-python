@@ -225,128 +225,27 @@ def fit_ica(
     # ================================================================
     # Direct MNE ICA construction (no throwaway Infomax)
     # ================================================================
-    import mne
-
-    # Resolve picks using public MNE API
-    if picks is None:
-        # Default: all data channels (eeg, meg, etc.) excluding bads — same as MNE ICA
-        picks_idx = mne.pick_types(inst.info, meg=True, eeg=True, ref_meg=False, exclude="bads")
-    elif isinstance(picks, str):
-        picks_idx = mne.pick_types(inst.info, **{picks: True}, exclude="bads")
-    else:
-        picks_idx = np.asarray(picks, dtype=int)
-
-    # Extract data, applying reject/flat if provided for Raw
+    prep = _prepare_mne_input(
+        inst,
+        n_components=n_components,
+        picks=picks,
+        reject=reject,
+        flat=flat,
+        decim=decim,
+        verbose=verbose,
+    )
     from mne.io import BaseRaw as _BaseRaw
 
-    if isinstance(inst, _BaseRaw) and (reject is not None or flat is not None):
-        # Create fixed-length epochs to apply rejection (matches MNE ICA behavior)
-        events = mne.make_fixed_length_events(inst, duration=1.0)
-        epochs = mne.Epochs(
-            inst,
-            events,
-            tmin=0,
-            tmax=1.0 - 1.0 / inst.info["sfreq"],
-            picks=picks_idx,
-            reject=reject,
-            flat=flat,
-            baseline=None,
-            preload=True,
-            verbose=verbose,
-        )
-        raw_data = np.concatenate(epochs.get_data(), axis=-1)
-        # picks_idx already applied inside Epochs
-        raw_data = raw_data.reshape(len(picks_idx), -1) if raw_data.ndim == 3 else raw_data
-    else:
-        raw_data = _extract_data(inst, picks_idx)
-
-    n_channels, n_samples = raw_data.shape
-
-    # Resolve n_components
-    if n_components is None:
-        n_comp = n_channels
-    else:
-        if n_components > n_channels:
-            raise ValueError(
-                f"n_components={n_components} exceeds the number of selected channels "
-                f"({n_channels}). Pass n_components<={n_channels}."
-            )
-        if n_components < 2:
-            # Validate the lower bound here so 0 and negative values fail with a clear
-            # message rather than an IndexError on an empty array or a negative slice,
-            # and so n_components=1 is not misreported as a rank-1 dataset.
-            raise ValueError(
-                f"n_components={n_components} is invalid; ICA needs at least 2 components."
-            )
-        n_comp = n_components
-
-    # Decimation
-    if decim is not None and decim > 1:
-        import scipy.signal
-
-        logger.info("Decimating data by factor %d using FIR anti-aliasing filter.", decim)
-        raw_data = scipy.signal.decimate(raw_data, decim, axis=-1, ftype="fir")
-        n_samples = raw_data.shape[1]
-
-    # Step 1: Pre-whiten (per-channel-type std normalization)
-    pre_whitener = _compute_pre_whitener(raw_data, inst.info, picks_idx)
-    data_pre = raw_data / pre_whitener
-
-    # Step 2: PCA
-    pca_components, pca_mean, pca_explained_variance = _compute_pca(data_pre, n_comp)
-
-    # Step 3: Project to PCA space (truncated to n_components)
-    data_centered = data_pre - pca_mean[:, None]
-    pca_data = pca_components[:n_comp] @ data_centered
-    # pca_data shape: (n_comp, n_samples)
-
-    # Normalize to unit variance per component to stabilize AMICA's gradient.
-    comp_stds = np.std(pca_data, axis=1, keepdims=True)
-
-    # Drop rank-deficient PCA directions before the division below. Average-referenced
-    # EEG has rank n_channels - 1, so its trailing direction carries only numerical
-    # noise (std ~1e-16). Dividing by that std inflates the corresponding column of W
-    # by ~1e16; np.linalg.pinv then uses a cutoff of rcond * sigma_max that exceeds
-    # every legitimate singular value, the pseudo-inverse collapses, and ICA.apply()
-    # returns near-zero data. Because SVD orders components by decreasing variance,
-    # the degenerate directions are always trailing, so truncating n_comp removes
-    # exactly those. MNE keeps the full pca_components_ and restores the dropped
-    # directions as PCA residual at their true (negligible) amplitude.
-    # Use the standard SVD numerical-rank tolerance (the rule behind
-    # np.linalg.matrix_rank): sigma_max * max(matrix shape) * eps. A looser
-    # threshold would discard genuine low-variance components; a tighter one would
-    # leave the ill-conditioned column in place.
-    stds_flat = comp_stds.ravel()
-    rank_tol = stds_flat[0] * max(data_centered.shape) * np.finfo(pca_data.dtype).eps
-    n_keep = int(np.count_nonzero(stds_flat > rank_tol))  # SVD order makes this a prefix
-
-    if n_keep < 2:
-        raise ValueError(
-            f"Estimated data rank is {n_keep}; ICA needs at least 2 components. The "
-            "input appears constant or degenerate after pre-whitening."
-        )
-    if n_keep < n_comp:
-        if n_components is not None:
-            # An explicit request we cannot honour is an error, not something to
-            # silently reinterpret.
-            raise ValueError(
-                f"n_components={n_components} exceeds the estimated rank of the data "
-                f"({n_keep} from {n_channels} selected channels). Average referencing "
-                "reduces rank by one. Pass n_components<=" + f"{n_keep}."
-            )
-        warnings.warn(
-            f"Estimated data rank is {n_keep} from {n_channels} selected channels; "
-            f"fitting {n_keep} components instead of {n_comp}. Rank deficiency is "
-            "expected after average referencing or channel interpolation. Pass "
-            f"n_components={n_keep} to select this explicitly.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-        n_comp = n_keep
-        pca_data = pca_data[:n_comp]
-        comp_stds = comp_stds[:n_comp]
-
-    data_for_amica = pca_data / comp_stds
+    data_for_amica = prep.data_for_amica
+    pre_whitener = prep.pre_whitener
+    pca_components = prep.pca_components
+    pca_mean = prep.pca_mean
+    pca_explained_variance = prep.pca_explained_variance
+    comp_stds = prep.comp_stds
+    n_comp = prep.n_comp
+    picks_idx = prep.picks_idx
+    n_samples = prep.n_samples
+    import mne
 
     # Step 4: Run AMICA
     cfg_kwargs = {
@@ -468,3 +367,248 @@ def get_model_ica(ica, model):
     out.labels_ = {}
     out._amica_model_index = int(model)
     return out
+
+
+class _MnePrep:
+    """Everything MNE-side needed to build ICA objects from an AMICA fit.
+
+    Holds the result of replicating MNE's pre-whitening + PCA pipeline, so that
+    :func:`fit_ica` and :class:`~jamica.AmicaICA` share one preprocessing path
+    rather than two that can drift apart.
+    """
+
+    __slots__ = (
+        "comp_stds",
+        "data_for_amica",
+        "decim",
+        "fit_sample_mask",
+        "n_comp",
+        "n_samples",
+        "pca_components",
+        "pca_explained_variance",
+        "pca_mean",
+        "picks_idx",
+        "pre_whitener",
+    )
+
+    def __init__(
+        self,
+        data_for_amica,
+        pre_whitener,
+        pca_components,
+        pca_mean,
+        pca_explained_variance,
+        comp_stds,
+        n_comp,
+        picks_idx,
+        n_samples,
+        fit_sample_mask=None,
+        decim=None,
+    ):
+        self.data_for_amica = data_for_amica
+        self.pre_whitener = pre_whitener
+        self.pca_components = pca_components
+        self.pca_mean = pca_mean
+        self.pca_explained_variance = pca_explained_variance
+        self.comp_stds = comp_stds
+        self.n_comp = n_comp
+        self.picks_idx = picks_idx
+        self.n_samples = n_samples
+        self.fit_sample_mask = fit_sample_mask
+        self.decim = decim
+
+    def project(self, data):
+        """Apply the fitted pre-whitening/PCA/scaling to new sensor-space data.
+
+        Parameters
+        ----------
+        data : np.ndarray, shape (n_channels, n_samples)
+            Sensor-space data for the same channels, in the same order, as the fit.
+
+        Returns
+        -------
+        np.ndarray, shape (n_comp, n_samples)
+            Data in the space AMICA was fitted in.
+        """
+        data_pre = np.asarray(data, dtype=np.float64) / self.pre_whitener
+        centered = data_pre - self.pca_mean[:, None]
+        return (self.pca_components[: self.n_comp] @ centered) / self.comp_stds
+
+
+def _prepare_mne_input(
+    inst,
+    n_components=None,
+    picks=None,
+    reject=None,
+    flat=None,
+    decim=None,
+    verbose=None,
+):
+    """Replicate MNE's pre-whiten + PCA pipeline ahead of an AMICA fit.
+
+    Extracted verbatim from :func:`fit_ica` so the multi-model parent object
+    uses exactly the same preprocessing rather than a second implementation.
+
+    Returns
+    -------
+    _MnePrep
+        The projected data plus every array needed to populate an
+        ``mne.preprocessing.ICA``.
+    """
+    import mne
+
+    # Resolve picks using public MNE API
+    if picks is None:
+        # Default: all data channels (eeg, meg, etc.) excluding bads — same as MNE ICA
+        picks_idx = mne.pick_types(inst.info, meg=True, eeg=True, ref_meg=False, exclude="bads")
+    elif isinstance(picks, str):
+        picks_idx = mne.pick_types(inst.info, **{picks: True}, exclude="bads")
+    else:
+        picks_idx = np.asarray(picks, dtype=int)
+
+    # Extract data, applying reject/flat if provided for Raw
+    from mne.io import BaseRaw as _BaseRaw
+
+    if isinstance(inst, _BaseRaw) and (reject is not None or flat is not None):
+        # Create fixed-length epochs to apply rejection (matches MNE ICA behavior)
+        events = mne.make_fixed_length_events(inst, duration=1.0)
+        epochs = mne.Epochs(
+            inst,
+            events,
+            tmin=0,
+            tmax=1.0 - 1.0 / inst.info["sfreq"],
+            picks=picks_idx,
+            reject=reject,
+            flat=flat,
+            baseline=None,
+            preload=True,
+            verbose=verbose,
+        )
+        raw_data = np.concatenate(epochs.get_data(), axis=-1)
+        # picks_idx already applied inside Epochs
+        raw_data = raw_data.reshape(len(picks_idx), -1) if raw_data.ndim == 3 else raw_data
+
+        # Record which points of the ORIGINAL timeline entered the fit. Epoching
+        # excludes two disjoint sets: epochs dropped by reject/flat, and any tail
+        # shorter than one epoch that make_fixed_length_events never covered.
+        # epochs.selection indexes surviving events, so the mapping is exact.
+        n_orig = getattr(inst, "n_times", None)
+        if n_orig is None:
+            times = getattr(inst, "times", None)
+            n_orig = len(times) if times is not None else None
+        if n_orig is None:
+            # No timeline exposed (e.g. a lightweight test double). Claim no
+            # exclusions rather than guess at a grid we cannot see.
+            fit_sample_mask = np.ones(raw_data.shape[1], dtype=bool)
+        else:
+            fit_sample_mask = np.zeros(int(n_orig), dtype=bool)
+            epoch_len = len(epochs.times)
+            first_samp = int(getattr(inst, "first_samp", 0) or 0)
+            for onset in events[np.asarray(epochs.selection, dtype=int), 0]:
+                start = int(onset) - first_samp
+                fit_sample_mask[start : start + epoch_len] = True
+    else:
+        raw_data = _extract_data(inst, picks_idx)
+        fit_sample_mask = np.ones(raw_data.shape[1], dtype=bool)
+
+    n_channels, n_samples = raw_data.shape
+
+    # Resolve n_components
+    if n_components is None:
+        n_comp = n_channels
+    else:
+        if n_components > n_channels:
+            raise ValueError(
+                f"n_components={n_components} exceeds the number of selected channels "
+                f"({n_channels}). Pass n_components<={n_channels}."
+            )
+        if n_components < 2:
+            # Validate the lower bound here so 0 and negative values fail with a clear
+            # message rather than an IndexError on an empty array or a negative slice,
+            # and so n_components=1 is not misreported as a rank-1 dataset.
+            raise ValueError(
+                f"n_components={n_components} is invalid; ICA needs at least 2 components."
+            )
+        n_comp = n_components
+
+    # Decimation
+    if decim is not None and decim > 1:
+        import scipy.signal
+
+        logger.info("Decimating data by factor %d using FIR anti-aliasing filter.", decim)
+        raw_data = scipy.signal.decimate(raw_data, decim, axis=-1, ftype="fir")
+        n_samples = raw_data.shape[1]
+
+    # Step 1: Pre-whiten (per-channel-type std normalization)
+    pre_whitener = _compute_pre_whitener(raw_data, inst.info, picks_idx)
+    data_pre = raw_data / pre_whitener
+
+    # Step 2: PCA
+    pca_components, pca_mean, pca_explained_variance = _compute_pca(data_pre, n_comp)
+
+    # Step 3: Project to PCA space (truncated to n_components)
+    data_centered = data_pre - pca_mean[:, None]
+    pca_data = pca_components[:n_comp] @ data_centered
+    # pca_data shape: (n_comp, n_samples)
+
+    # Normalize to unit variance per component to stabilize AMICA's gradient.
+    comp_stds = np.std(pca_data, axis=1, keepdims=True)
+
+    # Drop rank-deficient PCA directions before the division below. Average-referenced
+    # EEG has rank n_channels - 1, so its trailing direction carries only numerical
+    # noise (std ~1e-16). Dividing by that std inflates the corresponding column of W
+    # by ~1e16; np.linalg.pinv then uses a cutoff of rcond * sigma_max that exceeds
+    # every legitimate singular value, the pseudo-inverse collapses, and ICA.apply()
+    # returns near-zero data. Because SVD orders components by decreasing variance,
+    # the degenerate directions are always trailing, so truncating n_comp removes
+    # exactly those. MNE keeps the full pca_components_ and restores the dropped
+    # directions as PCA residual at their true (negligible) amplitude.
+    # Use the standard SVD numerical-rank tolerance (the rule behind
+    # np.linalg.matrix_rank): sigma_max * max(matrix shape) * eps. A looser
+    # threshold would discard genuine low-variance components; a tighter one would
+    # leave the ill-conditioned column in place.
+    stds_flat = comp_stds.ravel()
+    rank_tol = stds_flat[0] * max(data_centered.shape) * np.finfo(pca_data.dtype).eps
+    n_keep = int(np.count_nonzero(stds_flat > rank_tol))  # SVD order makes this a prefix
+
+    if n_keep < 2:
+        raise ValueError(
+            f"Estimated data rank is {n_keep}; ICA needs at least 2 components. The "
+            "input appears constant or degenerate after pre-whitening."
+        )
+    if n_keep < n_comp:
+        if n_components is not None:
+            # An explicit request we cannot honour is an error, not something to
+            # silently reinterpret.
+            raise ValueError(
+                f"n_components={n_components} exceeds the estimated rank of the data "
+                f"({n_keep} from {n_channels} selected channels). Average referencing "
+                "reduces rank by one. Pass n_components<=" + f"{n_keep}."
+            )
+        warnings.warn(
+            f"Estimated data rank is {n_keep} from {n_channels} selected channels; "
+            f"fitting {n_keep} components instead of {n_comp}. Rank deficiency is "
+            "expected after average referencing or channel interpolation. Pass "
+            f"n_components={n_keep} to select this explicitly.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        n_comp = n_keep
+        pca_data = pca_data[:n_comp]
+        comp_stds = comp_stds[:n_comp]
+
+    data_for_amica = pca_data / comp_stds
+
+    return _MnePrep(
+        data_for_amica=data_for_amica,
+        pre_whitener=pre_whitener,
+        pca_components=pca_components,
+        pca_mean=pca_mean,
+        pca_explained_variance=pca_explained_variance,
+        comp_stds=comp_stds,
+        n_comp=n_comp,
+        picks_idx=picks_idx,
+        n_samples=n_samples,
+        fit_sample_mask=fit_sample_mask,
+        decim=decim,
+    )
