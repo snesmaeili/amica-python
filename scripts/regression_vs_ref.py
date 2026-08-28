@@ -1,150 +1,314 @@
-"""Does the accelerated code still produce the validated numbers?
+"""Check the current solver against the validated pre-optimization baseline.
 
-Compares HEAD against 450a63cd -- the last commit before any of this work, and
-the code the manuscript's results were produced with. Each version is fitted in
-its own subprocess with PYTHONPATH pointing at its own checkout, because both
-install as `jamica` and would otherwise shadow each other.
+The default baseline (``450a63cd``) is the last commit before the numerical
+optimizations used for the 0.2.0 release. The script checks three execution
+paths because they carry different reproducibility guarantees:
 
-Three configurations, because they carry different guarantees and conflating
-them is how a "no change" claim gets overstated:
+* full batch: current fused E-step with ``chunk_size=None``;
+* blocked: the current ``chunk_size="auto"`` default;
+* classic: the pre-fusion compatibility E-step.
 
-  full-batch      HEAD with chunk_size=None against the baseline. NOT expected
-                  bit-identical: two of the optimisations replace power(x, k)
-                  with exp(k*log x) and restructure a softmax, which are the same
-                  value mathematically and a different last bit in floating
-                  point. Measured at 6.9e-10 relative in W and 9.4e-16 in the
-                  log-likelihood -- read against the 1e-4 the codebase already
-                  holds its full-batch and chunked paths to.
+Floating-point regrouping means bit identity is informative but not required.
+The command fails if the unmixing matrices, likelihood history, iteration
+count, or matched component directions leave the tolerances printed below.
 
-  blocked         HEAD with the new default against the baseline. This regroups
-                  the E-step's sums over blocks, so it cannot be bit-identical
-                  and is not claimed to be -- what matters is that the deviation
-                  sits far inside the tolerance the codebase already held its
-                  full-batch and chunked paths to (1e-4).
-
-  classic e-step  HEAD with estep="classic" against the baseline, the documented
-                  escape hatch for reproducing pre-fusion results.
-
-Reported per configuration: whether the unmixing matrix and the entire
-log-likelihood history match bit-for-bit, and if not, by how much.
+The baseline is checked out into a temporary Git worktree and both revisions
+run in isolated subprocesses via ``PYTHONPATH``. No second installation is
+needed.
 """
 
+from __future__ import annotations
+
+import argparse
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-SCRATCH = Path(
-    "C:/Users/s/AppData/Local/Temp/claude/"
-    "E--amica-validation-workspace/8188d342-377b-4b1c-9149-828f5742e50c/scratchpad"
-)
-BASELINE = SCRATCH / "baseline"
-CURRENT = Path("E:/amica-validation-workspace/repos/amica-python")
-PYTHON = CURRENT / ".venv-dev/Scripts/python.exe"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_BASELINE = "450a63cd"
+MAX_REL_W = 1e-4
+MAX_REL_LL = 1e-10
+MIN_MATCHED_CORR = 0.999999
+
+
+class FitResult(TypedDict):
+    """Numerical outputs retained from one benchmark fit."""
+
+    W: np.ndarray
+    log_likelihood: np.ndarray
+    n_iter: int
+
+
+class Comparison(TypedDict):
+    """Metrics comparing one current fit to the baseline."""
+
+    bit_identical: bool
+    relative_W: float
+    relative_ll: float
+    matched_correlation: float
+    iterations_match: bool
+
 
 WORKER = r"""
-import json, sys
+import json
+import importlib
+import sys
+
 import numpy as np
-from jamica import Amica, AmicaConfig
+
+package = importlib.import_module(sys.argv[5])
+Amica = package.Amica
+AmicaConfig = package.AmicaConfig
 
 cfg_kw = json.loads(sys.argv[1])
 out = sys.argv[2]
+n_samples = int(sys.argv[3])
+max_iter = int(sys.argv[4])
 
 rng = np.random.default_rng(20260809)
-srcs = rng.laplace(size=(12, 40000))
-data = (rng.normal(size=(12, 12)) @ srcs)
+sources = rng.laplace(size=(12, n_samples))
+data = rng.normal(size=(12, 12)) @ sources
 
-cfg = AmicaConfig(num_models=1, num_mix_comps=3, max_iter=40,
-                  dtype="float64", fix_init=True, **cfg_kw)
-res = Amica(cfg, random_state=42).fit(data)
-W = np.asarray(res.unmixing_matrix_white_, dtype=np.float64)
+config = AmicaConfig(
+    num_models=1,
+    num_mix_comps=3,
+    max_iter=max_iter,
+    dtype="float64",
+    fix_init=True,
+    **cfg_kw,
+)
+result = Amica(config, random_state=42).fit(data)
+W = np.asarray(result.unmixing_matrix_white_, dtype=np.float64)
 if W.ndim == 3:
     W = W[:, :, 0]
-np.savez(out, W=W, ll=np.asarray(res.log_likelihood, dtype=np.float64))
+np.savez(
+    out,
+    W=W,
+    log_likelihood=np.asarray(result.log_likelihood, dtype=np.float64),
+    n_iter=np.asarray(result.n_iter, dtype=np.int64),
+)
 """
 
 
-def run(checkout: Path, cfg_kw: dict, tag: str) -> dict:
-    script = SCRATCH / "_worker.py"
-    script.write_text(WORKER, encoding="utf-8")
-    out = SCRATCH / f"_reg_{tag}.npz"
-    env = {
-        "PYTHONPATH": str(checkout),
-        "JAX_ENABLE_X64": "1",
-        "PATH": __import__("os").environ["PATH"],
-        "SYSTEMROOT": __import__("os").environ.get("SYSTEMROOT", ""),
-    }
-    cp = subprocess.run(
-        [str(PYTHON), str(script), json.dumps(cfg_kw), str(out)],
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--baseline-ref",
+        default=DEFAULT_BASELINE,
+        help=f"Git revision used as the numerical reference (default: {DEFAULT_BASELINE}).",
+    )
+    parser.add_argument(
+        "--current",
+        type=Path,
+        default=REPO_ROOT,
+        help="Current checkout to evaluate (default: repository containing this script).",
+    )
+    parser.add_argument(
+        "--python",
+        type=Path,
+        default=Path(sys.executable),
+        help="Python executable used for each isolated fit.",
+    )
+    parser.add_argument("--n-samples", type=int, default=40_000)
+    parser.add_argument("--max-iter", type=int, default=40)
+    parser.add_argument(
+        "--backend",
+        choices=("cpu", "numpy"),
+        default="cpu",
+        help="Use JAX on CPU or force the NumPy fallback (default: cpu).",
+    )
+    return parser.parse_args()
+
+
+def _run(
+    checkout: Path,
+    cfg_kw: dict[str, Any],
+    tag: str,
+    *,
+    python: Path,
+    scratch: Path,
+    n_samples: int,
+    max_iter: int,
+    backend: str,
+) -> FitResult:
+    worker = scratch / "worker.py"
+    worker.write_text(WORKER, encoding="utf-8")
+    output = scratch / f"result-{tag}.npz"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(checkout)
+    env["JAX_ENABLE_X64"] = "1"
+    if backend == "numpy":
+        env["AMICA_NO_JAX"] = "1"
+        env.pop("JAX_PLATFORM_NAME", None)
+    else:
+        env.pop("AMICA_NO_JAX", None)
+        env["JAX_PLATFORM_NAME"] = "cpu"
+    if (checkout / "jamica").is_dir():
+        import_name = "jamica"
+    elif (checkout / "amica").is_dir():
+        import_name = "amica"
+    else:
+        raise RuntimeError(f"no jamica or amica import package found in {checkout}")
+    process = subprocess.run(
+        [
+            str(python),
+            str(worker),
+            json.dumps(cfg_kw),
+            str(output),
+            str(n_samples),
+            str(max_iter),
+            import_name,
+        ],
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
-    if cp.returncode != 0:
-        raise SystemExit(f"{tag} failed:\n{cp.stderr[-2500:]}")
-    d = np.load(out)
-    return {"W": d["W"], "ll": d["ll"]}
+    if process.returncode:
+        raise RuntimeError(
+            f"{tag} failed with exit code {process.returncode}:\n{process.stderr[-4000:]}"
+        )
+    with np.load(output) as result:
+        return {
+            "W": result["W"].copy(),
+            "log_likelihood": result["log_likelihood"].copy(),
+            "n_iter": int(result["n_iter"]),
+        }
 
 
-def compare(a: dict, b: dict) -> tuple[bool, float, float]:
-    same = np.array_equal(a["W"], b["W"]) and np.array_equal(a["ll"], b["ll"])
-    dw = float(np.max(np.abs(a["W"] - b["W"]) / np.maximum(np.abs(a["W"]), 1e-300)))
-    dl = float(np.max(np.abs(a["ll"] - b["ll"]) / np.maximum(np.abs(a["ll"]), 1e-300)))
-    return same, dw, dl
+def _max_relative_error(reference: np.ndarray, actual: np.ndarray) -> float:
+    denominator = np.maximum(np.abs(reference), np.finfo(np.float64).tiny)
+    return float(np.max(np.abs(reference - actual) / denominator))
 
 
-print(f"baseline : {BASELINE}  (450a63cd, last commit before this work)")
-print(f"current  : {CURRENT}\n")
+def _worst_matched_correlation(reference: np.ndarray, actual: np.ndarray) -> float:
+    reference = reference / np.linalg.norm(reference, axis=1, keepdims=True)
+    actual = actual / np.linalg.norm(actual, axis=1, keepdims=True)
+    correlations = np.abs(reference @ actual.T)
+    rows, columns = linear_sum_assignment(-correlations)
+    return float(np.min(correlations[rows, columns]))
 
-ref = run(BASELINE, {"chunk_size": None}, "baseline")
 
-cases: list[tuple[str, dict[str, Any], bool]] = [
-    ("full batch (chunk_size=None)", {"chunk_size": None}, False),
-    ("blocked (new default)", {"chunk_size": "auto"}, False),
-    ("classic e-step", {"chunk_size": None, "estep": "classic"}, False),
-]
+def _compare(reference: FitResult, actual: FitResult) -> Comparison:
+    ref_W = np.asarray(reference["W"])
+    got_W = np.asarray(actual["W"])
+    ref_ll = np.asarray(reference["log_likelihood"])
+    got_ll = np.asarray(actual["log_likelihood"])
+    if ref_W.shape != got_W.shape:
+        raise RuntimeError(f"unmixing shape changed from {ref_W.shape} to {got_W.shape}")
+    if ref_ll.shape != got_ll.shape:
+        raise RuntimeError(
+            f"likelihood-history shape changed from {ref_ll.shape} to {got_ll.shape}"
+        )
+    if not np.isfinite(got_W).all() or not np.isfinite(got_ll).all():
+        raise RuntimeError("current result contains NaN or Inf")
+    return {
+        "bit_identical": np.array_equal(ref_W, got_W) and np.array_equal(ref_ll, got_ll),
+        "relative_W": _max_relative_error(ref_W, got_W),
+        "relative_ll": _max_relative_error(ref_ll, got_ll),
+        "matched_correlation": _worst_matched_correlation(ref_W, got_W),
+        "iterations_match": reference["n_iter"] == actual["n_iter"],
+    }
 
-print(f"{'configuration':32} {'bit-identical':>14} {'worst rel dW':>13} {'worst rel dLL':>14}")
-print("-" * 78)
-ok = True
-for label, kw, must_be_exact in cases:
-    got = run(CURRENT, kw, label.split()[0])
-    same, dw, dl = compare(ref, got)
+
+def _git(*args: str, cwd: Path = REPO_ROOT) -> str:
+    process = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True)
+    return process.stdout.strip()
+
+
+def main() -> int:
+    """Run the regression comparison and return a process exit status."""
+    args = _parse_args()
+    if args.n_samples < 12:
+        raise ValueError("--n-samples must be >= 12")
+    if args.max_iter < 1:
+        raise ValueError("--max-iter must be >= 1")
+    current = args.current.resolve()
+    python = args.python.resolve()
+    baseline_hash = _git("rev-parse", args.baseline_ref)
+    current_hash = _git("-C", str(current), "rev-parse", "HEAD")
+
+    cases: list[tuple[str, dict[str, Any]]] = [
+        ("full-batch", {"chunk_size": None}),
+        ("blocked", {"chunk_size": "auto"}),
+        ("classic", {"chunk_size": None, "estep": "classic"}),
+    ]
+
+    with tempfile.TemporaryDirectory(prefix="jamica-regression-") as temp_dir:
+        scratch = Path(temp_dir)
+        baseline = scratch / "baseline"
+        _git("worktree", "add", "--detach", str(baseline), baseline_hash)
+        try:
+            reference = _run(
+                baseline,
+                {"chunk_size": None},
+                "baseline",
+                python=python,
+                scratch=scratch,
+                n_samples=args.n_samples,
+                max_iter=args.max_iter,
+                backend=args.backend,
+            )
+            results = {
+                name: _run(
+                    current,
+                    config,
+                    name,
+                    python=python,
+                    scratch=scratch,
+                    n_samples=args.n_samples,
+                    max_iter=args.max_iter,
+                    backend=args.backend,
+                )
+                for name, config in cases
+            }
+        finally:
+            _git("worktree", "remove", "--force", str(baseline))
+
+    print(f"baseline: {baseline_hash[:12]} ({args.baseline_ref})")
+    print(f"current : {current_hash[:12]} ({current})")
+    print(f"backend : {args.backend}; samples={args.n_samples}; iterations={args.max_iter}")
+    print()
     print(
-        f"{label:32} {('YES' if same else 'no'):>14} "
-        f"{(0.0 if same else dw):13.2e} {(0.0 if same else dl):14.2e}"
+        f"{'configuration':16} {'exact':>7} {'rel dW':>12} {'rel dLL':>12} "
+        f"{'worst |r|':>12} {'n_iter':>8}"
     )
-    if must_be_exact and not same:
-        ok = False
-        print("    ^^ EXPECTED BIT-IDENTICAL -- this is a regression, not rounding")
+    print("-" * 75)
 
-print()
-# The row-correlation is the number that matters: it is the metric the
-# manuscript compares implementations with, so it is the one that says whether
-# the decomposition changed rather than merely its last bits.
+    passed = True
+    for name, _ in cases:
+        comparison = _compare(reference, results[name])
+        case_passed = (
+            comparison["relative_W"] <= MAX_REL_W
+            and comparison["relative_ll"] <= MAX_REL_LL
+            and comparison["matched_correlation"] >= MIN_MATCHED_CORR
+            and comparison["iterations_match"]
+        )
+        passed &= case_passed
+        print(
+            f"{name:16} "
+            f"{('yes' if comparison['bit_identical'] else 'no'):>7} "
+            f"{comparison['relative_W']:12.2e} "
+            f"{comparison['relative_ll']:12.2e} "
+            f"{comparison['matched_correlation']:12.10f} "
+            f"{('match' if comparison['iterations_match'] else 'DIFF'):>8}"
+        )
 
-print()
-print(f"{'configuration':32} {'worst matched |r|':>18} {'final log-likelihood':>22}")
-print("-" * 76)
+    print()
+    print(
+        f"required: rel dW <= {MAX_REL_W:.0e}, rel dLL <= {MAX_REL_LL:.0e}, "
+        f"worst |r| >= {MIN_MATCHED_CORR:.6f}, and matching n_iter"
+    )
+    print("PASS" if passed else "FAIL")
+    return 0 if passed else 1
 
 
-def matched(a, b):
-    a = a / np.linalg.norm(a, axis=1, keepdims=True)
-    b = b / np.linalg.norm(b, axis=1, keepdims=True)
-    c = np.abs(a @ b.T)
-    r, k = linear_sum_assignment(-c)
-    return float(np.min(c[r, k]))
-
-
-print(f"{'baseline':32} {1.0:18.10f} {ref['ll'][-1]:22.15f}")
-for label, kw, _ in cases:
-    got = run(CURRENT, kw, label.split()[0])
-    print(f"{label:32} {matched(ref['W'], got['W']):18.10f} {got['ll'][-1]:22.15f}")
-print()
-print("A worst matched |r| of 1.0000000000 means the decomposition is unchanged;")
-print("the codebase holds its own full-batch and chunked paths to rel_err < 1e-4.")
-sys.exit(0 if ok else 1)
+if __name__ == "__main__":
+    raise SystemExit(main())

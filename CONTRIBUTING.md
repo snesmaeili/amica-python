@@ -223,6 +223,20 @@ Contributions that compare jamica against other ICA implementations are especial
 
 Benchmarking on new EEG or MEG datasets is also encouraged.
 
+Changes to the solver, preprocessing, or an external solver contract must also
+pass the numerical regression gate:
+
+```bash
+python scripts/regression_vs_ref.py --backend=cpu
+```
+
+The command checks full-batch, default blocked, and classic E-step fits against
+the validated pre-optimization baseline in an isolated temporary checkout. It
+fails on a changed iteration count, non-finite output, relative unmixing error
+above `1e-4`, relative likelihood error above `1e-10`, or worst matched
+component correlation below `0.999999`. Use `--backend=numpy` to repeat the
+same gate without JAX.
+
 ______________________________________________________________________
 
 # Code of Conduct
