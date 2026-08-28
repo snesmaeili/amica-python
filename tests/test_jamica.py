@@ -232,6 +232,28 @@ def test_invalid_config():
         AmicaConfig(minrho=0.5)
     with pytest.raises(ValueError):
         AmicaConfig(maxrho=3.0)
+    with pytest.raises(ValueError, match="dtype"):
+        AmicaConfig(dtype="float16")
+    with pytest.raises(ValueError, match="max_iter"):
+        AmicaConfig(max_iter=0)
+    with pytest.raises(ValueError, match="max_iter"):
+        AmicaConfig(max_iter=1.5)
+    with pytest.raises(ValueError, match="pcakeep"):
+        AmicaConfig(pcakeep=0)
+    with pytest.raises(ValueError, match="pcakeep"):
+        AmicaConfig(pcakeep=2.5)
+
+
+def test_random_state_validation():
+    """Random state errors are raised at construction, not late in fit."""
+    from jamica import Amica
+
+    with pytest.raises(TypeError, match="random_state"):
+        Amica(random_state="not an RNG")
+    with pytest.raises(TypeError, match="random_state"):
+        Amica(random_state=True)
+    with pytest.raises(ValueError, match="non-negative"):
+        Amica(random_state=-1)
 
 
 @pytest.mark.parametrize(
@@ -525,6 +547,37 @@ def test_newton_path(tiny_data):
     solver = Amica(config, random_state=42)
     res = solver.fit(tiny_data)
     assert res.n_iter == 3
+
+
+def test_n_iter_counts_guarded_attempts(monkeypatch, tiny_data):
+    """Numerically rejected steps still count as attempted iterations."""
+    import jamica.solver as solver_module
+    from jamica import Amica, AmicaConfig
+    from jamica.backend import jnp
+
+    def _guarded_bad_step(W, A, c, alpha, mu, beta, rho, gm, *args, **kwargs):
+        return (
+            W,
+            A,
+            c,
+            alpha,
+            mu,
+            beta,
+            rho,
+            gm,
+            jnp.asarray(np.nan),
+            jnp.asarray(False),
+            jnp.asarray(False),
+        )
+
+    monkeypatch.setattr(solver_module, "_amica_step_fused", _guarded_bad_step)
+    config = AmicaConfig(max_iter=3, do_newton=False, chunk_size=None, estep="fused")
+    result = Amica(config, random_state=42).fit(tiny_data)
+
+    assert result.n_iter == 3
+    assert result.log_likelihood.size == 0
+    assert result.iteration_times.shape == (3,)
+    assert result.elapsed_times.shape == (3,)
 
 
 def test_chunked_path(tiny_data):

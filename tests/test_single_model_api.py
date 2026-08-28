@@ -110,6 +110,35 @@ def test_scaled_operator_matches_solver_transform():
     np.testing.assert_allclose(Y, W @ X)
 
 
+@pytest.mark.parametrize(
+    "rng_factory",
+    [lambda: np.random.RandomState(42), lambda: np.random.default_rng(42)],
+    ids=["RandomState", "Generator"],
+)
+def test_numpy_random_state_objects_are_supported(rng_factory):
+    """The public MNE-facing function accepts both NumPy RNG APIs."""
+    X = np.random.default_rng(0).standard_normal((3, 40))
+
+    outputs = []
+    for _ in range(2):
+        with pytest.warns(JamicaConvergenceWarning, match="did not converge"):
+            outputs.append(
+                amica(
+                    X,
+                    max_iter=1,
+                    do_newton=False,
+                    chunk_size=None,
+                    random_state=rng_factory(),
+                )
+            )
+
+    for left, right in zip(outputs[0], outputs[1], strict=True):
+        if left is None:
+            assert right is None
+        else:
+            np.testing.assert_allclose(left, right)
+
+
 def test_whitened_operator_includes_internal_scale(monkeypatch):
     """The optional internally whitened path must use caller coordinates."""
     scale = 0.25

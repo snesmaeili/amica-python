@@ -36,6 +36,34 @@ from .updates import (
 
 logger = logging.getLogger(__name__)
 
+RandomStateLike = int | np.integer | np.random.RandomState | np.random.Generator | None
+
+
+def _validate_random_state(random_state: RandomStateLike) -> None:
+    """Validate the supported NumPy random-state forms without consuming them."""
+    if random_state is None or isinstance(
+        random_state, (np.random.RandomState, np.random.Generator)
+    ):
+        return
+    if isinstance(random_state, bool) or not isinstance(random_state, (int, np.integer)):
+        raise TypeError(
+            "random_state must be a non-negative int, numpy.random.RandomState, "
+            "numpy.random.Generator, or None"
+        )
+    if int(random_state) < 0:
+        raise ValueError("random_state must be a non-negative int")
+
+
+def _numpy_rng(random_state: RandomStateLike) -> np.random.RandomState | np.random.Generator:
+    """Return an RNG while preserving integer-seed and stateful-object semantics."""
+    _validate_random_state(random_state)
+    if isinstance(random_state, (np.random.RandomState, np.random.Generator)):
+        return random_state
+    # This is the initialization path JAMICA has historically used for integer
+    # seeds. Keep it unchanged so existing seeded fits remain reproducible.
+    return np.random.default_rng(random_state)
+
+
 # Lightweight namedtuple to pass config parameters into the JIT-compiled step.
 # Defined at the module level to avoid re-registering a new type on every JIT trace.
 ParamConfig = namedtuple(
@@ -1010,14 +1038,15 @@ class AmicaResult:
         Model centers.
     gm_ : np.ndarray, shape (n_models,)
         Model weights (for multi-model).
-    log_likelihood : np.ndarray, shape (n_iter,)
-        Log-likelihood per iteration.
+    log_likelihood : np.ndarray, shape (n_accepted_iterations,)
+        Log-likelihood for each numerically valid, accepted iteration.
     iteration_times : np.ndarray, shape (n_iter,)
         Wall-clock time per iteration in seconds.
     elapsed_times : np.ndarray, shape (n_iter,)
         Cumulative wall-clock time in seconds.
     n_iter : int
-        Number of iterations performed.
+        Number of solver iterations attempted. This can exceed
+        ``len(log_likelihood)`` when a guarded update encounters NaN or Inf.
     converged : bool
         Whether the algorithm converged.
     sample_mask_ : np.ndarray of bool or None, shape (n_samples,)
@@ -1321,8 +1350,10 @@ class Amica:
     config : AmicaConfig, optional
         Configuration object with all algorithm parameters.
         If None, uses default configuration.
-    random_state : int, optional
-        Random seed for reproducibility.
+    random_state : int | numpy.random.RandomState | numpy.random.Generator | None
+        Random state controlling initialization. An integer creates the same
+        fresh generator on every fit. A ``RandomState`` or ``Generator`` is
+        consumed in place, following NumPy's stateful-object semantics.
 
     Attributes
     ----------
@@ -1357,11 +1388,16 @@ class Amica:
     def __init__(
         self,
         config: AmicaConfig | None = None,
-        random_state: int | None = None,
+        random_state: RandomStateLike = None,
     ):
+        _validate_random_state(random_state)
         self.config = config if config is not None else AmicaConfig()
         self.random_state = random_state
-        self.rng = jax.random.PRNGKey(random_state if random_state is not None else 0)
+        # Retained for compatibility with the existing estimator attribute.
+        # Initialization itself is NumPy-based; non-integer RNG objects cannot
+        # be represented by a JAX key and use this inert fallback key instead.
+        key_seed = int(random_state) % (2**32) if isinstance(random_state, (int, np.integer)) else 0
+        self.rng = jax.random.PRNGKey(key_seed)
         self.result_: AmicaResult | None = None
 
     def get_params(self, deep: bool = True) -> dict:
@@ -1848,6 +1884,10 @@ class Amica:
                 else:
                     logger.info("Iter %4d: LL = %.6f, lrate = %.2e", iteration, ll_val, lrate)
 
+            ll_prev_val = ll_val
+            iteration_times.append(time.perf_counter() - iter_start)
+            elapsed_times.append(time.perf_counter() - start_time)
+
             # Checkpoint
             if (
                 self.config.outdir is not None
@@ -1872,16 +1912,12 @@ class Amica:
                     log_likelihood=np.array(LL),
                     iteration_times=np.array(iteration_times),
                     elapsed_times=np.array(elapsed_times),
-                    n_iter=len(LL),
+                    n_iter=len(iteration_times),
                     converged=converged,
                     data_scale=scaling_factor,
                 )
                 self.save(self.config.outdir)
                 logger.info("Saved checkpoint to %s", self.config.outdir)
-
-            ll_prev_val = ll_val
-            iteration_times.append(time.perf_counter() - iter_start)
-            elapsed_times.append(time.perf_counter() - start_time)
 
         if not converged:
             logger.info("Reached max_iter (%d)", self.config.max_iter)
@@ -1941,7 +1977,7 @@ class Amica:
             log_likelihood=np.array(LL),
             iteration_times=np.array(iteration_times),
             elapsed_times=np.array(elapsed_times),
-            n_iter=len(LL),
+            n_iter=len(iteration_times),
             converged=converged,
             data_scale=scaling_factor,
             model_posteriors_=model_posteriors,
@@ -1997,7 +2033,7 @@ class Amica:
         gm : jnp.ndarray, shape (n_models,)
             Initial model probabilities.
         """
-        rng = np.random.default_rng(self.random_state)
+        rng = _numpy_rng(self.random_state)
 
         if n_models > 1:
             # Multi-model init: per-model arrays with INDEPENDENT jitter so the
@@ -2321,8 +2357,9 @@ def amica(
         (data is pre-whitened by MNE's PCA step).
     return_n_iter : bool
         If True, return n_iter as a fourth element: ``K, W, Y, n_iter``.
-    random_state : int | None
-        Random seed for reproducibility.
+    random_state : int | numpy.random.RandomState | numpy.random.Generator | None
+        Random state controlling initialization. Integer seeds are repeatable
+        across calls; NumPy RNG objects are consumed in place.
     max_iter : int
         Maximum number of EM iterations.
     num_mix : int
