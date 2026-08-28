@@ -22,6 +22,7 @@ K, W, Y, n_iter = amica(
     return_n_iter=True,
     random_state=random_state,
     max_iter=max_iter,
+    num_models=1,
 )
 ```
 
@@ -81,15 +82,20 @@ The stable functional signature exposes only:
 - `chunk_size` for bounded-memory CPU/JAX execution;
 - `random_state` for initialization.
 
+The keyword-only `num_models` parameter accepts only `1`. A different value
+raises an actionable `ValueError` directing the caller to
+{class}`jamica.AmicaICA`. This lets errors from an MNE `fit_params` dictionary
+propagate without an MNE-specific guard.
+
 `random_state` accepts a non-negative integer, `numpy.random.RandomState`,
 `numpy.random.Generator`, or `None`. Integer seeds create the same fresh
 generator for each fit. RNG objects are consumed in place.
 
-There is no `**kwargs` escape hatch. Parameters that would enable internal
-centering, sphering, PCA, a different dtype, backend selection, or multiple
-models are not accepted. Passing one raises Python's normal unexpected-keyword
-`TypeError`. This prevents an adapter's `fit_params` from silently violating
-the single-model or preprocessed-data contract.
+There is no `**kwargs` escape hatch. Other parameters that would enable
+internal centering, sphering, PCA, a different dtype, or backend selection are
+not accepted. Passing one raises Python's normal unexpected-keyword `TypeError`.
+This prevents an adapter's `fit_params` from silently violating the
+single-model or preprocessed-data contract.
 
 The package uses JAX when it is installed and otherwise uses its NumPy
 implementation. JAX and GPU support remain optional; the MNE integration does

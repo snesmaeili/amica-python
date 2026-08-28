@@ -2326,6 +2326,7 @@ def amica(
     max_iter=2000,
     num_mix=3,
     *,
+    num_models=1,
     min_dll=1e-9,
     do_newton=True,
     newt_start=50,
@@ -2364,6 +2365,9 @@ def amica(
         Maximum number of EM iterations.
     num_mix : int
         Number of generalized Gaussian mixture components per source.
+    num_models : int
+        Number of AMICA models. Only ``1`` is supported by this functional
+        interface. Use :class:`jamica.AmicaICA` for multiple models.
     min_dll : float
         Minimum log-likelihood improvement used for convergence.
     do_newton : bool
@@ -2392,6 +2396,16 @@ def amica(
         Number of iterations. Only returned when ``return_n_iter=True``,
         as the fourth element.
     """
+    if (
+        isinstance(num_models, bool)
+        or not isinstance(num_models, (int, np.integer))
+        or num_models != 1
+    ):
+        raise ValueError(
+            "jamica.amica() supports a single AMICA model. "
+            "For multi-model AMICA, use jamica.AmicaICA."
+        )
+
     X = np.asarray(X)
     if X.ndim != 2:
         raise ValueError(f"X must be a 2D array, got shape {X.shape}")

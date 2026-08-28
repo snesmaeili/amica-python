@@ -45,6 +45,7 @@ def test_preprocessed_single_model_contract(monkeypatch):
         random_state=42,
         max_iter=10,
         num_mix=2,
+        num_models=1,
     )
 
     config = captured["config"]
@@ -169,12 +170,16 @@ def test_whitened_operator_includes_internal_scale(monkeypatch):
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"num_models": 2},
         {"n_models": 2},
         {"do_mean": True},
         {"do_sphere": True},
+        {"do_pca": True},
         {"pcakeep": 2},
         {"dtype": "float32"},
+        {"update_c": True},
+        {"sphere_type": "pca"},
+        {"do_approx_sphere": True},
+        {"mineig": 1e-10},
         {"backend": "jax"},
     ],
 )
@@ -183,6 +188,23 @@ def test_protected_options_are_not_public(kwargs):
     X = np.random.default_rng(0).standard_normal((3, 30))
     with pytest.raises(TypeError, match="unexpected keyword argument"):
         amica(X, max_iter=1, **kwargs)
+
+
+def test_multi_model_request_has_actionable_error():
+    """MNE fit_params must propagate guidance to the native multi-model API."""
+    X = np.random.default_rng(0).standard_normal((3, 30))
+    message = (
+        "jamica.amica() supports a single AMICA model. For multi-model AMICA, use jamica.AmicaICA."
+    )
+
+    with pytest.raises(ValueError) as error:
+        amica(X, num_models=2)
+    assert str(error.value) == message
+
+    fit_params = {"num_models": 2}
+    with pytest.raises(ValueError) as error:
+        amica(X, whiten=False, return_n_iter=True, **fit_params)
+    assert str(error.value) == message
 
 
 @pytest.mark.parametrize(

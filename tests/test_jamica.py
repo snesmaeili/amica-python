@@ -7,6 +7,8 @@ import sys
 import numpy as np
 import pytest
 
+import jamica.solver as solver_module
+
 
 def test_fit_random_data():
     """Test basic fitting on random data."""
@@ -499,7 +501,6 @@ def test_choose_chunk_size_does_not_understate_estep_cost():
     import jax
 
     from jamica.accumulators import compute_chunk_stats
-    from jamica.solver import _choose_chunk_size
 
     n_samples = 4000
     for n_comp, n_mix in ((8, 1), (8, 3), (16, 3), (16, 5)):
@@ -524,7 +525,7 @@ def test_choose_chunk_size_does_not_understate_estep_cost():
         )
 
     # Guard the wiring too: a tiny budget must still produce a usable chunk.
-    assert 1 <= _choose_chunk_size(n_samples, 16, 3) <= n_samples
+    assert 1 <= solver_module._choose_chunk_size(n_samples, 16, 3) <= n_samples
 
 
 @pytest.fixture
@@ -551,7 +552,6 @@ def test_newton_path(tiny_data):
 
 def test_n_iter_counts_guarded_attempts(monkeypatch, tiny_data):
     """Numerically rejected steps still count as attempted iterations."""
-    import jamica.solver as solver_module
     from jamica import Amica, AmicaConfig
     from jamica.backend import jnp
 
@@ -620,18 +620,14 @@ def test_chunked_path_no_updates(tiny_data):
 
 def test_auto_chunk_size_returns_valid_int():
     """_choose_chunk_size returns int in [1, n_samples]."""
-    from jamica.solver import _choose_chunk_size
-
-    cs = _choose_chunk_size(n_samples=10000, n_components=32, n_mix_comps=3)
+    cs = solver_module._choose_chunk_size(n_samples=10000, n_components=32, n_mix_comps=3)
     assert isinstance(cs, int)
     assert 1 <= cs <= 10000
 
 
 def test_auto_chunk_size_bounded_by_n_samples():
     """_choose_chunk_size never exceeds n_samples."""
-    from jamica.solver import _choose_chunk_size
-
-    cs = _choose_chunk_size(n_samples=100, n_components=4, n_mix_comps=3)
+    cs = solver_module._choose_chunk_size(n_samples=100, n_components=4, n_mix_comps=3)
     assert cs <= 100
 
 
@@ -640,12 +636,10 @@ def test_auto_chunk_size_small_budget():
     psutil = pytest.importorskip("psutil")
     from unittest.mock import MagicMock, patch
 
-    from jamica.solver import _choose_chunk_size
-
     mock_vmem = MagicMock()
     mock_vmem.available = 5 * 1024 * 1024  # 5 MiB
     with patch.object(psutil, "virtual_memory", return_value=mock_vmem):
-        cs = _choose_chunk_size(
+        cs = solver_module._choose_chunk_size(
             n_samples=500_000, n_components=64, n_mix_comps=3, memory_fraction=1.0
         )
     assert cs < 500_000
@@ -958,16 +952,14 @@ def test_rejection_behavioral():
 def test_rejection_threshold_rule():
     """_reject_threshold: one-sided lower cut at mean - rejsig*std over the current
     good set, and monotone (a rejected sample is never re-accepted)."""
-    from jamica.solver import _reject_threshold
-
     lls = np.zeros(100)
     lls[50] = -10.0  # one clear low outlier
     mask0 = np.ones(100, dtype=bool)
 
-    mask1, n1 = _reject_threshold(lls, mask0, rejsig=3.0)
+    mask1, n1 = solver_module._reject_threshold(lls, mask0, rejsig=3.0)
     assert n1 == 1 and not mask1[50] and mask1.sum() == 99
     # Re-running over the new good set never re-accepts the rejected sample.
-    mask2, _ = _reject_threshold(lls, mask1, rejsig=3.0)
+    mask2, _ = solver_module._reject_threshold(lls, mask1, rejsig=3.0)
     assert not mask2[50]
     assert mask2.sum() <= mask1.sum()  # monotone non-increasing good count
 
@@ -1053,18 +1045,16 @@ def test_rejection_chunked_matches_fused():
 @pytest.mark.filterwarnings("ignore:JAMICA did not converge")
 def test_amica_wrapper(tiny_data):
     """Test the picard-compatible amica() wrapper function."""
-    from jamica.solver import amica
-
     # tiny_data is (n_channels, n_samples) — same as picard convention
     X = tiny_data
 
-    K, W, Y, n_iter = amica(X, max_iter=2, return_n_iter=True, random_state=42)
+    K, W, Y, n_iter = solver_module.amica(X, max_iter=2, return_n_iter=True, random_state=42)
     assert K is None
     assert W.shape == (4, 4)
     assert Y.shape == X.shape
     assert n_iter == 2
 
-    K2, W2, _Y2 = amica(X, max_iter=1, return_n_iter=False)
+    K2, W2, _Y2 = solver_module.amica(X, max_iter=1, return_n_iter=False)
     assert K2 is None
     assert W2.shape == (4, 4)
 
@@ -1083,8 +1073,6 @@ def test_amica_wrapper_whiten_true_applies_sphering():
     ``whiten=False`` on data it has pre-whitened itself, where ``Y = W @ X`` is
     correct by construction, so this never reached the MNE integration.
     """
-    from jamica.solver import amica
-
     rng = np.random.default_rng(0)
     n, n_samples = 3, 3000
     sources = np.vstack(
@@ -1098,7 +1086,7 @@ def test_amica_wrapper_whiten_true_applies_sphering():
     # Deliberate non-zero offset so the mean subtraction is exercised too.
     X = rng.normal(size=(n, n)) @ sources + 5.0
 
-    K, W, Y = amica(X, n_components=n, whiten=True, max_iter=150, random_state=0)
+    K, W, Y = solver_module.amica(X, n_components=n, whiten=True, max_iter=150, random_state=0)
 
     # K is the sphering matrix, not None, so Y is reproducible by the caller.
     assert K is not None
@@ -1113,7 +1101,7 @@ def test_amica_wrapper_whiten_true_applies_sphering():
     assert np.abs(corr).max(axis=1).min() > 0.97
 
     # whiten=False is unchanged: nothing to undo, so W applies to X directly.
-    K0, W0, Y0 = amica(X, n_components=n, whiten=False, max_iter=20, random_state=0)
+    K0, W0, Y0 = solver_module.amica(X, n_components=n, whiten=False, max_iter=20, random_state=0)
     assert K0 is None
     np.testing.assert_allclose(Y0, W0 @ X, atol=1e-10)
 
@@ -1127,8 +1115,6 @@ def test_picard_api_parity(tiny_data):
     Does not check numerical agreement (different algorithms).
     """
     picard_mod = pytest.importorskip("picard")
-    from jamica.solver import amica
-
     # MNE passes data[:, sel].T → (n_components, n_samples)
     X = tiny_data  # (4, 200)
 
@@ -1136,7 +1122,7 @@ def test_picard_api_parity(tiny_data):
     K_p, W_p, Y_p, n_iter_p = picard_mod.picard(
         X, whiten=False, return_n_iter=True, random_state=42
     )
-    K_a, W_a, Y_a, n_iter_a = amica(
+    K_a, W_a, Y_a, n_iter_a = solver_module.amica(
         X, whiten=False, return_n_iter=True, random_state=42, max_iter=2
     )
 
@@ -1153,7 +1139,9 @@ def test_picard_api_parity(tiny_data):
     assert isinstance(n_iter_p, int) and n_iter_p > 0
 
     # MNE unpack pattern works without error
-    _, W_mne, _, _ = amica(X, whiten=False, return_n_iter=True, random_state=42, max_iter=2)
+    _, W_mne, _, _ = solver_module.amica(
+        X, whiten=False, return_n_iter=True, random_state=42, max_iter=2
+    )
     assert W_mne.shape == (X.shape[0], X.shape[0])
 
 
