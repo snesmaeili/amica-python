@@ -6,3 +6,5 @@ accepts arbitrary configuration keywords, so callers cannot enable multiple
 models or hidden preprocessing through adapter parameters. It accepts both
 NumPy random-state APIs, reports attempted iterations accurately, and warns
 with `JamicaConvergenceWarning` when a finite last iterate has not converged.
+The top-level package now exposes `jamica.__version__` so optional-dependency
+version checks can enforce this contract.

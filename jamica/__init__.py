@@ -15,6 +15,13 @@ References
        (2008). Newton Method for the ICA Mixture Model. ICASSP 2008.
 """
 
+try:
+    from importlib.metadata import version
+
+    __version__ = version("jamica")
+except Exception:
+    __version__ = "0.0.0"
+
 from .amica_ica import AmicaICA, read_amica_ica
 from .config import AmicaConfig
 from .exceptions import JamicaConvergenceWarning
@@ -43,6 +50,7 @@ __all__ = [
     "AmicaICA",
     "AmicaResult",
     "JamicaConvergenceWarning",
+    "__version__",
     "amica",
     "fit_ica",
     "get_model_ica",

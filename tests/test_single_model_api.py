@@ -1,11 +1,17 @@
 """Contract tests for the public single-model ``amica`` function."""
 
+from importlib.metadata import version
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from jamica import Amica, AmicaConfig, JamicaConvergenceWarning, amica
+from jamica import Amica, AmicaConfig, JamicaConvergenceWarning, __version__, amica
+
+
+def test_public_version_matches_distribution():
+    """Expose the installed distribution version for dependency checks."""
+    assert __version__ == version("jamica")
 
 
 def _fake_result(n_features, *, data_scale=1.0, converged=True):
