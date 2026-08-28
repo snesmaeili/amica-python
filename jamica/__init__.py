@@ -1,8 +1,9 @@
 """jamica: Native Python AMICA for MNE-Python.
 
 Adaptive Mixture Independent Component Analysis (AMICA) [1]_ [2]_ with JAX
-acceleration. Designed as a native ICA method for MNE-Python
-(via ``mne.preprocessing.ICA``).
+acceleration. The public :func:`jamica.amica` function provides a stable
+single-model solver boundary for ICA frameworks such as MNE-Python; advanced
+multi-model functionality remains available through the native JAMICA API.
 
 References
 ----------
@@ -14,8 +15,16 @@ References
        (2008). Newton Method for the ICA Mixture Model. ICASSP 2008.
 """
 
+try:
+    from importlib.metadata import version
+
+    __version__ = version("jamica")
+except Exception:
+    __version__ = "0.0.0"
+
 from .amica_ica import AmicaICA, read_amica_ica
 from .config import AmicaConfig
+from .exceptions import JamicaConvergenceWarning
 from .metrics import (
     mixture_entropy,
     multimodality_flag,
@@ -40,6 +49,8 @@ __all__ = [
     "AmicaConfig",
     "AmicaICA",
     "AmicaResult",
+    "JamicaConvergenceWarning",
+    "__version__",
     "amica",
     "fit_ica",
     "get_model_ica",

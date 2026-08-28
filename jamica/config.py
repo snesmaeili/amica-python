@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numbers import Integral
 from pathlib import Path
 from typing import Literal
 
@@ -228,6 +229,20 @@ class AmicaConfig:
 
     def __post_init__(self):
         """Validate configuration."""
+        if self.dtype not in ("float32", "float64"):
+            raise ValueError("dtype must be 'float32' or 'float64'")
+        if (
+            isinstance(self.max_iter, bool)
+            or not isinstance(self.max_iter, Integral)
+            or self.max_iter < 1
+        ):
+            raise ValueError("max_iter must be an int >= 1")
+        if self.pcakeep is not None and (
+            isinstance(self.pcakeep, bool)
+            or not isinstance(self.pcakeep, Integral)
+            or self.pcakeep < 1
+        ):
+            raise ValueError("pcakeep must be an int >= 1 or None")
         if self.num_models < 1:
             raise ValueError("num_models must be >= 1")
         if self.num_mix_comps < 1:

@@ -132,6 +132,28 @@ ica.plot_components()
 ica.apply(raw)
 ```
 
+For integrations that already whiten and PCA-reduce their data, `jamica.amica`
+is the stable single-model solver boundary:
+
+```python
+from jamica import amica
+
+_, W, sources, n_iter = amica(
+    X_ica,
+    whiten=False,
+    return_n_iter=True,
+    random_state=42,
+)
+```
+
+Here `X_ica` is shaped `(n_components, n_samples)`, `sources == W @ X_ica`,
+and JAMICA performs no additional centering, whitening, or PCA. Multi-model
+adaptive ICA and its model probabilities remain available through the native
+JAMICA API rather than this conventional-ICA boundary.
+
+See the [MNE single-model solver contract](docs/mne_solver_contract.md) for
+the exact matrix, preprocessing, random-state, and error guarantees.
+
 ______________________________________________________________________
 
 # Examples

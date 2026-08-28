@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+import warnings
 from collections import namedtuple
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -15,6 +16,7 @@ import numpy as np
 
 from .backend import jax, jnp
 from .config import AmicaConfig
+from .exceptions import JamicaConvergenceWarning
 from .likelihood import (
     compute_log_det_W,
     compute_total_loglikelihood,
@@ -33,6 +35,34 @@ from .updates import (
 )
 
 logger = logging.getLogger(__name__)
+
+RandomStateLike = int | np.integer | np.random.RandomState | np.random.Generator | None
+
+
+def _validate_random_state(random_state: RandomStateLike) -> None:
+    """Validate the supported NumPy random-state forms without consuming them."""
+    if random_state is None or isinstance(
+        random_state, (np.random.RandomState, np.random.Generator)
+    ):
+        return
+    if isinstance(random_state, bool) or not isinstance(random_state, (int, np.integer)):
+        raise TypeError(
+            "random_state must be a non-negative int, numpy.random.RandomState, "
+            "numpy.random.Generator, or None"
+        )
+    if int(random_state) < 0:
+        raise ValueError("random_state must be a non-negative int")
+
+
+def _numpy_rng(random_state: RandomStateLike) -> np.random.RandomState | np.random.Generator:
+    """Return an RNG while preserving integer-seed and stateful-object semantics."""
+    _validate_random_state(random_state)
+    if isinstance(random_state, (np.random.RandomState, np.random.Generator)):
+        return random_state
+    # This is the initialization path JAMICA has historically used for integer
+    # seeds. Keep it unchanged so existing seeded fits remain reproducible.
+    return np.random.default_rng(random_state)
+
 
 # Lightweight namedtuple to pass config parameters into the JIT-compiled step.
 # Defined at the module level to avoid re-registering a new type on every JIT trace.
@@ -1008,14 +1038,15 @@ class AmicaResult:
         Model centers.
     gm_ : np.ndarray, shape (n_models,)
         Model weights (for multi-model).
-    log_likelihood : np.ndarray, shape (n_iter,)
-        Log-likelihood per iteration.
+    log_likelihood : np.ndarray, shape (n_accepted_iterations,)
+        Log-likelihood for each numerically valid, accepted iteration.
     iteration_times : np.ndarray, shape (n_iter,)
         Wall-clock time per iteration in seconds.
     elapsed_times : np.ndarray, shape (n_iter,)
         Cumulative wall-clock time in seconds.
     n_iter : int
-        Number of iterations performed.
+        Number of solver iterations attempted. This can exceed
+        ``len(log_likelihood)`` when a guarded update encounters NaN or Inf.
     converged : bool
         Whether the algorithm converged.
     sample_mask_ : np.ndarray of bool or None, shape (n_samples,)
@@ -1319,8 +1350,10 @@ class Amica:
     config : AmicaConfig, optional
         Configuration object with all algorithm parameters.
         If None, uses default configuration.
-    random_state : int, optional
-        Random seed for reproducibility.
+    random_state : int | numpy.random.RandomState | numpy.random.Generator | None
+        Random state controlling initialization. An integer creates the same
+        fresh generator on every fit. A ``RandomState`` or ``Generator`` is
+        consumed in place, following NumPy's stateful-object semantics.
 
     Attributes
     ----------
@@ -1355,11 +1388,16 @@ class Amica:
     def __init__(
         self,
         config: AmicaConfig | None = None,
-        random_state: int | None = None,
+        random_state: RandomStateLike = None,
     ):
+        _validate_random_state(random_state)
         self.config = config if config is not None else AmicaConfig()
         self.random_state = random_state
-        self.rng = jax.random.PRNGKey(random_state if random_state is not None else 0)
+        # Retained for compatibility with the existing estimator attribute.
+        # Initialization itself is NumPy-based; non-integer RNG objects cannot
+        # be represented by a JAX key and use this inert fallback key instead.
+        key_seed = int(random_state) % (2**32) if isinstance(random_state, (int, np.integer)) else 0
+        self.rng = jax.random.PRNGKey(key_seed)
         self.result_: AmicaResult | None = None
 
     def get_params(self, deep: bool = True) -> dict:
@@ -1846,6 +1884,10 @@ class Amica:
                 else:
                     logger.info("Iter %4d: LL = %.6f, lrate = %.2e", iteration, ll_val, lrate)
 
+            ll_prev_val = ll_val
+            iteration_times.append(time.perf_counter() - iter_start)
+            elapsed_times.append(time.perf_counter() - start_time)
+
             # Checkpoint
             if (
                 self.config.outdir is not None
@@ -1870,16 +1912,12 @@ class Amica:
                     log_likelihood=np.array(LL),
                     iteration_times=np.array(iteration_times),
                     elapsed_times=np.array(elapsed_times),
-                    n_iter=len(LL),
+                    n_iter=len(iteration_times),
                     converged=converged,
                     data_scale=scaling_factor,
                 )
                 self.save(self.config.outdir)
                 logger.info("Saved checkpoint to %s", self.config.outdir)
-
-            ll_prev_val = ll_val
-            iteration_times.append(time.perf_counter() - iter_start)
-            elapsed_times.append(time.perf_counter() - start_time)
 
         if not converged:
             logger.info("Reached max_iter (%d)", self.config.max_iter)
@@ -1939,7 +1977,7 @@ class Amica:
             log_likelihood=np.array(LL),
             iteration_times=np.array(iteration_times),
             elapsed_times=np.array(elapsed_times),
-            n_iter=len(LL),
+            n_iter=len(iteration_times),
             converged=converged,
             data_scale=scaling_factor,
             model_posteriors_=model_posteriors,
@@ -1995,7 +2033,7 @@ class Amica:
         gm : jnp.ndarray, shape (n_models,)
             Initial model probabilities.
         """
-        rng = np.random.default_rng(self.random_state)
+        rng = _numpy_rng(self.random_state)
 
         if n_models > 1:
             # Multi-model init: per-model arrays with INDEPENDENT jitter so the
@@ -2287,13 +2325,23 @@ def amica(
     random_state=None,
     max_iter=2000,
     num_mix=3,
-    **kwargs,
+    *,
+    num_models=1,
+    min_dll=1e-9,
+    do_newton=True,
+    newt_start=50,
+    chunk_size="auto",
 ):
-    """Adaptive Mixture ICA (AMICA).
+    """Fit a single AMICA model through a Picard-compatible interface.
 
     Returns the ``(K, W, Y)`` tuple MNE-Python's ICA dispatch expects (the
-    calling convention shared by its fastica/infomax/picard methods), used in MNE-Python's
-    ``ICA`` dispatch (``method='amica'``).
+    calling convention shared by its FastICA/Infomax/Picard methods).
+
+    With ``whiten=False``, this function is a strict preprocessed-data
+    boundary: JAMICA performs no centering, sphering, or PCA, and always fits
+    exactly one model. In that mode the returned unmixing matrix operates
+    directly on ``X``, including when the solver applies its emergency scalar
+    rescaling for numerical stability.
 
     Parameters
     ----------
@@ -2301,65 +2349,157 @@ def amica(
         Pre-whitened data, features x samples.  This matches MNE's
         ICA-method convention; MNE passes ``data[:, sel].T`` which gives
         (n_components, n_samples).
-    n_components : int or None
-        Number of components. If None, uses X.shape[0].
+    n_components : int | None
+        Number of components. With ``whiten=False``, this must be ``None`` or
+        equal to ``X.shape[0]`` because the input has already been reduced by
+        the caller. With ``whiten=True``, it controls JAMICA's internal PCA.
     whiten : bool
         If True, whiten the data internally. MNE always passes False
         (data is pre-whitened by MNE's PCA step).
     return_n_iter : bool
         If True, return n_iter as a fourth element: ``K, W, Y, n_iter``.
-    random_state : int or None
-        Random seed for reproducibility.
+    random_state : int | numpy.random.RandomState | numpy.random.Generator | None
+        Random state controlling initialization. Integer seeds are repeatable
+        across calls; NumPy RNG objects are consumed in place.
     max_iter : int
         Maximum number of EM iterations.
     num_mix : int
         Number of generalized Gaussian mixture components per source.
-    **kwargs
-        Additional parameters passed to AmicaConfig.
+    num_models : int
+        Number of AMICA models. Only ``1`` is supported by this functional
+        interface. Use :class:`jamica.AmicaICA` for multiple models.
+    min_dll : float
+        Minimum log-likelihood improvement used for convergence.
+    do_newton : bool
+        Whether to use Newton updates after the natural-gradient warm-up.
+    newt_start : int
+        Iteration at which Newton updates may begin.
+    chunk_size : int | 'auto' | None
+        Number of samples per E-step block. ``'auto'`` selects a block size
+        from the active backend and available memory.
 
     Returns
     -------
     K : ndarray, shape (n_components, n_features), or None
-        Pre-whitening matrix.  Always None when ``whiten=False``, which is the
+        Pre-whitening matrix. Always None when ``whiten=False``, which is the
         case for MNE (it pre-whitens itself and discards this value).  When
-        ``whiten=True`` this is the sphering matrix the solver computed, so the
-        caller can reproduce ``Y`` as ``W @ K @ (X - mean)``.
+        ``whiten=True`` this is the sphering matrix, including any scalar input
+        rescaling applied by the solver.
     W : ndarray, shape (n_components, n_components)
-        Unmixing matrix (operates on whitened data).
+        Unmixing matrix. With ``whiten=False``, it operates directly on ``X``.
+        With ``whiten=True``, it operates on the centered data transformed by
+        ``K``.
     Y : ndarray, shape (n_components, n_samples)
-        Source matrix: ``W @ X``.
+        Source matrix. This is exactly ``W @ X`` when ``whiten=False``;
+        otherwise JAMICA's centering and the returned ``K`` are also applied.
     n_iter : int
         Number of iterations. Only returned when ``return_n_iter=True``,
         as the fourth element.
     """
-    from .config import AmicaConfig
+    if (
+        isinstance(num_models, bool)
+        or not isinstance(num_models, (int, np.integer))
+        or num_models != 1
+    ):
+        raise ValueError(
+            "jamica.amica() supports a single AMICA model. "
+            "For multi-model AMICA, use jamica.AmicaICA."
+        )
+
+    X = np.asarray(X)
+    if X.ndim != 2:
+        raise ValueError(f"X must be a 2D array, got shape {X.shape}")
+    if np.iscomplexobj(X) or not np.issubdtype(X.dtype, np.number):
+        raise TypeError("X must contain real numeric values")
+    X = np.asarray(X, dtype=np.float64)
+    if not np.isfinite(X).all():
+        raise ValueError("X contains non-finite values (NaN or Inf)")
+
+    n_features, n_samples = X.shape
+    if n_features < 2:
+        raise ValueError("X must contain at least 2 features for ICA")
+    if n_samples < n_features:
+        raise ValueError(
+            "X must contain at least as many samples as features, got "
+            f"{n_samples} samples and {n_features} features"
+        )
+    if n_components is not None:
+        if isinstance(n_components, bool) or not isinstance(n_components, (int, np.integer)):
+            raise TypeError("n_components must be an int or None")
+        if not 2 <= n_components <= min(n_features, n_samples):
+            raise ValueError(
+                f"n_components must be between 2 and min(n_features, n_samples), got {n_components}"
+            )
+    if not whiten and n_components not in (None, n_features):
+        raise ValueError(
+            "n_components must equal X.shape[0] when whiten=False because X "
+            "must already be PCA-reduced"
+        )
 
     cfg_kwargs = {
         "max_iter": max_iter,
         "num_mix_comps": num_mix,
+        "num_models": 1,
+        "dtype": "float64",
         "do_sphere": whiten,
         "do_mean": whiten,
+        "do_pca": whiten,
+        "pcakeep": n_components if whiten else None,
+        "update_c": whiten,
+        "min_dll": min_dll,
+        "do_newton": do_newton,
+        "newt_start": newt_start,
+        "chunk_size": chunk_size,
     }
-    cfg_kwargs.update(kwargs)
     config = AmicaConfig(**cfg_kwargs)
 
     # X is (n_features, n_samples) — same shape the AMICA solver expects.
     solver = Amica(config, random_state=random_state)
     result = solver.fit(X)
 
-    W = result.unmixing_matrix_white_  # (n_components, n_components)
+    W_internal = np.asarray(result.unmixing_matrix_white_, dtype=np.float64)
+    if whiten and n_components is None:
+        # Internal PCA may reduce rank according to ``mineig``.
+        expected_components = W_internal.shape[0]
+    else:
+        expected_components = n_features if n_components is None else n_components
+    expected_shape = (expected_components, expected_components)
+    if W_internal.shape != expected_shape:
+        raise RuntimeError(
+            "JAMICA returned an invalid single-model unmixing shape: expected "
+            f"{expected_shape}, got {W_internal.shape}"
+        )
+    if not np.isfinite(W_internal).all():
+        raise RuntimeError("JAMICA returned a non-finite unmixing matrix")
+    if np.linalg.matrix_rank(W_internal) != expected_components:
+        raise RuntimeError("JAMICA returned a singular unmixing matrix")
+
+    data_scale = float(result.data_scale)
+    if not np.isfinite(data_scale) or data_scale <= 0:
+        raise RuntimeError(f"JAMICA returned an invalid data scale: {data_scale!r}")
 
     if whiten:
-        # The solver centred and sphered internally, so W operates on whitened
-        # data and cannot be applied to the raw X -- the mean and the sphering
-        # have to be put back first.  Returning the sphering matrix as K also
-        # lets the caller reproduce Y, which was impossible while K was None.
-        K = np.asarray(result.whitener_)
-        mean = np.asarray(result.mean_).reshape(-1, 1)
-        Y = W @ (K @ (X - mean))  # (n_components, n_samples)
+        # Amica.fit() computes its mean and sphere after multiplying X by
+        # data_scale. Fold that scalar into K and express the mean back in the
+        # caller's coordinates so K acts on the original X.
+        W = W_internal
+        K = data_scale * np.asarray(result.whitener_, dtype=np.float64)
+        mean = np.asarray(result.mean_, dtype=np.float64).reshape(-1, 1) / data_scale
+        Y = W @ (K @ (X - mean))
     else:
-        K = None  # MNE pre-whitens; kept for the MNE ICA-method signature
-        Y = W @ X  # (n_components, n_samples)
+        # With no affine preprocessing, the solver optimized W_internal on
+        # data_scale * X. Return the equivalent operator on the caller's X.
+        K = None
+        W = data_scale * W_internal
+        Y = W @ X
+
+    if not result.converged:
+        warnings.warn(
+            f"JAMICA did not converge after {result.n_iter} iteration(s). "
+            "Consider increasing max_iter.",
+            JamicaConvergenceWarning,
+            stacklevel=2,
+        )
 
     if return_n_iter:
         return K, W, Y, result.n_iter

@@ -82,6 +82,7 @@ caption: Reference
 hidden: true
 ---
 api
+mne_solver_contract
 auto_examples/index
 contributing
 ```
