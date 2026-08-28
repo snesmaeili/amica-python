@@ -2,6 +2,59 @@
 
 <!-- towncrier release notes start -->
 
+## [0.3.0](https://github.com/snesmaeili/jamica/releases/tag/v0.3.0) (2026-08-28)
+
+### Enhancements
+
+- `AmicaICA.save()` writes a whole multi-model fit to HDF5 and `read_amica_ica()` reads it back, restoring the per-model `mne.preprocessing.ICA` views along with each child's `exclude` and `labels_`. A FIF file holds one unmixing matrix and so cannot represent a mixture; HDF5 is used through the same MNE helper that `EOGRegression` uses, and needs the optional `h5io` dependency (`pip install "jamica[hdf5]"`). `AmicaICA.export_model_fifs()` additionally writes each model as an ordinary `-ica.fif` that `mne.preprocessing.read_ica()` opens on a machine without jamica installed, so a decomposition never becomes readable only through this package.
+- `AmicaICA` exposes a multi-model AMICA fit as one ordinary `mne.preprocessing.ICA` per model, so MNE's existing review tools work unchanged on each model while the mixture — the model priors and the posterior time course — stays on the parent. `apply()` raises for more than one model rather than silently reconstructing from the highest-weight one; name the model with `model_idx=` or use `models_[h].apply()`. Posteriors are reported on the input sampling grid for both Raw and Epochs, and `fit_sample_mask_` records which samples drove the fit. `fit_ica()` is unchanged.
+
+### Bug Fixes
+
+- Multi-model fits froze every model centre at zero whenever the caller had already centred the data, because the M-step gated its centre update on `do_mean` — which asks whether preprocessing removes the global mean, a separate question. The mixture could then only distinguish its models by their unmixing matrices. The centre update is now controlled by `AmicaConfig.update_c`, which defaults to following `do_mean` for a single model and to always updating for a mixture; single-model behaviour is unchanged.
+
+### API Changes
+
+- `jamica.amica` is now a stable, single-model solver boundary for ICA frameworks
+  that already preprocess their data. With `whiten=False` it disables JAMICA
+  centering, sphering, and PCA, composes any internal scalar rescaling into the
+  returned unmixing matrix, and guarantees `Y == W @ X`. The function no longer
+  accepts arbitrary configuration keywords, so callers cannot enable multiple
+  models or hidden preprocessing through adapter parameters. It accepts both
+  NumPy random-state APIs, reports attempted iterations accurately, and warns
+  with `JamicaConvergenceWarning` when a finite last iterate has not converged.
+  The top-level package now exposes `jamica.__version__` so optional-dependency
+  version checks can enforce this contract.
+
+### Documentation
+
+- Added a project logo and rewrote the README opening around it. The README now
+  leads with what jamica is and where the name comes from, and `docs/_static/`
+  carries the generated logo, navbar mark and favicon. All of the assets are
+  derived from a single master by `scripts/make_logo_assets.py`.
+- Added an AI usage statement, and shortened the README's validation section to a
+  summary plus a pointer at
+  [jamica-benchmark](https://github.com/snesmaeili/jamica-benchmark), which holds
+  the protocols, the cross-implementation comparisons and the manuscript figures.
+  The patched Fortran reference is public there, which the README previously said
+  it was not.
+- Replaced the logo with the line-art mark and corrected how the assets are
+  derived from it. The background removal kept anti-aliased edges opaque in
+  their blended-with-white colour, which showed as a pale rim on any dark
+  surface and became a bright halo in the dark variant; it now solves for
+  coverage and colour separately. The dark variant also decided what counted
+  as greyscale using HLS saturation, which is unstable for near-black pixels
+  and left holes in the wordmark, and now uses absolute chroma.
+- Restored the solid-fill logo artwork, and stopped downscaling the navbar mark
+  to a fixed 512px. The mark is now capped rather than resized, so it keeps the
+  master's native resolution when that is smaller than the cap instead of
+  throwing away detail retina displays can show.
+- The documentation build works again. `docs/contributing.md` includes `CONTRIBUTING.md`, so its document-relative link to `AI_USAGE.md` was resolved against `docs/` rather than the repository root and raised a warning, which the build treats as an error. The link is now absolute, which resolves for both GitHub and Sphinx.
+- Trimmed the README's validation section to the result and a pointer. The scope
+  detail and the instructions for reproducing the parity numbers now live in the
+  documentation, under Numerical validation.
+- `AmicaICA`, `read_amica_ica` and `get_model_ica` now appear in the API reference, and the introduction points multi-model users at `AmicaICA` rather than only at `fit_ica`.
+
 ## [0.2.0](https://github.com/snesmaeili/jamica/releases/tag/v0.2.0) (2026-08-13)
 
 ### Enhancements

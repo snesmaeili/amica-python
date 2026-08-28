@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jamica"
-version = "0.2.0"
+version = "0.3.0"
 description = "Native Python implementation of AMICA for MNE-Python and scientific EEG workflows."
 readme = { file = "README.md", content-type = "text/markdown" }
 license = "BSD-3-Clause"
