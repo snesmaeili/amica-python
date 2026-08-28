@@ -30,8 +30,8 @@ authors:
 license: BSD-3-Clause
 repository-code: "https://github.com/snesmaeili/jamica"
 doi: "10.5281/zenodo.21817485"
-version: "0.2.0"
-date-released: "2026-08-13"
+version: "0.3.0"
+date-released: "2026-08-28"
 keywords:
   - EEG
   - MEG
