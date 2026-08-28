@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+import warnings
 from collections import namedtuple
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -15,6 +16,7 @@ import numpy as np
 
 from .backend import jax, jnp
 from .config import AmicaConfig
+from .exceptions import JamicaConvergenceWarning
 from .likelihood import (
     compute_log_det_W,
     compute_total_loglikelihood,
@@ -2287,13 +2289,22 @@ def amica(
     random_state=None,
     max_iter=2000,
     num_mix=3,
-    **kwargs,
+    *,
+    min_dll=1e-9,
+    do_newton=True,
+    newt_start=50,
+    chunk_size="auto",
 ):
-    """Adaptive Mixture ICA (AMICA).
+    """Fit a single AMICA model through a Picard-compatible interface.
 
     Returns the ``(K, W, Y)`` tuple MNE-Python's ICA dispatch expects (the
-    calling convention shared by its fastica/infomax/picard methods), used in MNE-Python's
-    ``ICA`` dispatch (``method='amica'``).
+    calling convention shared by its FastICA/Infomax/Picard methods).
+
+    With ``whiten=False``, this function is a strict preprocessed-data
+    boundary: JAMICA performs no centering, sphering, or PCA, and always fits
+    exactly one model. In that mode the returned unmixing matrix operates
+    directly on ``X``, including when the solver applies its emergency scalar
+    rescaling for numerical stability.
 
     Parameters
     ----------
@@ -2301,65 +2312,143 @@ def amica(
         Pre-whitened data, features x samples.  This matches MNE's
         ICA-method convention; MNE passes ``data[:, sel].T`` which gives
         (n_components, n_samples).
-    n_components : int or None
-        Number of components. If None, uses X.shape[0].
+    n_components : int | None
+        Number of components. With ``whiten=False``, this must be ``None`` or
+        equal to ``X.shape[0]`` because the input has already been reduced by
+        the caller. With ``whiten=True``, it controls JAMICA's internal PCA.
     whiten : bool
         If True, whiten the data internally. MNE always passes False
         (data is pre-whitened by MNE's PCA step).
     return_n_iter : bool
         If True, return n_iter as a fourth element: ``K, W, Y, n_iter``.
-    random_state : int or None
+    random_state : int | None
         Random seed for reproducibility.
     max_iter : int
         Maximum number of EM iterations.
     num_mix : int
         Number of generalized Gaussian mixture components per source.
-    **kwargs
-        Additional parameters passed to AmicaConfig.
+    min_dll : float
+        Minimum log-likelihood improvement used for convergence.
+    do_newton : bool
+        Whether to use Newton updates after the natural-gradient warm-up.
+    newt_start : int
+        Iteration at which Newton updates may begin.
+    chunk_size : int | 'auto' | None
+        Number of samples per E-step block. ``'auto'`` selects a block size
+        from the active backend and available memory.
 
     Returns
     -------
     K : ndarray, shape (n_components, n_features), or None
-        Pre-whitening matrix.  Always None when ``whiten=False``, which is the
+        Pre-whitening matrix. Always None when ``whiten=False``, which is the
         case for MNE (it pre-whitens itself and discards this value).  When
-        ``whiten=True`` this is the sphering matrix the solver computed, so the
-        caller can reproduce ``Y`` as ``W @ K @ (X - mean)``.
+        ``whiten=True`` this is the sphering matrix, including any scalar input
+        rescaling applied by the solver.
     W : ndarray, shape (n_components, n_components)
-        Unmixing matrix (operates on whitened data).
+        Unmixing matrix. With ``whiten=False``, it operates directly on ``X``.
+        With ``whiten=True``, it operates on the centered data transformed by
+        ``K``.
     Y : ndarray, shape (n_components, n_samples)
-        Source matrix: ``W @ X``.
+        Source matrix. This is exactly ``W @ X`` when ``whiten=False``;
+        otherwise JAMICA's centering and the returned ``K`` are also applied.
     n_iter : int
         Number of iterations. Only returned when ``return_n_iter=True``,
         as the fourth element.
     """
-    from .config import AmicaConfig
+    X = np.asarray(X)
+    if X.ndim != 2:
+        raise ValueError(f"X must be a 2D array, got shape {X.shape}")
+    if np.iscomplexobj(X) or not np.issubdtype(X.dtype, np.number):
+        raise TypeError("X must contain real numeric values")
+    X = np.asarray(X, dtype=np.float64)
+    if not np.isfinite(X).all():
+        raise ValueError("X contains non-finite values (NaN or Inf)")
+
+    n_features, n_samples = X.shape
+    if n_features < 2:
+        raise ValueError("X must contain at least 2 features for ICA")
+    if n_samples < n_features:
+        raise ValueError(
+            "X must contain at least as many samples as features, got "
+            f"{n_samples} samples and {n_features} features"
+        )
+    if n_components is not None:
+        if isinstance(n_components, bool) or not isinstance(n_components, (int, np.integer)):
+            raise TypeError("n_components must be an int or None")
+        if not 2 <= n_components <= min(n_features, n_samples):
+            raise ValueError(
+                f"n_components must be between 2 and min(n_features, n_samples), got {n_components}"
+            )
+    if not whiten and n_components not in (None, n_features):
+        raise ValueError(
+            "n_components must equal X.shape[0] when whiten=False because X "
+            "must already be PCA-reduced"
+        )
 
     cfg_kwargs = {
         "max_iter": max_iter,
         "num_mix_comps": num_mix,
+        "num_models": 1,
+        "dtype": "float64",
         "do_sphere": whiten,
         "do_mean": whiten,
+        "do_pca": whiten,
+        "pcakeep": n_components if whiten else None,
+        "update_c": whiten,
+        "min_dll": min_dll,
+        "do_newton": do_newton,
+        "newt_start": newt_start,
+        "chunk_size": chunk_size,
     }
-    cfg_kwargs.update(kwargs)
     config = AmicaConfig(**cfg_kwargs)
 
     # X is (n_features, n_samples) — same shape the AMICA solver expects.
     solver = Amica(config, random_state=random_state)
     result = solver.fit(X)
 
-    W = result.unmixing_matrix_white_  # (n_components, n_components)
+    W_internal = np.asarray(result.unmixing_matrix_white_, dtype=np.float64)
+    if whiten and n_components is None:
+        # Internal PCA may reduce rank according to ``mineig``.
+        expected_components = W_internal.shape[0]
+    else:
+        expected_components = n_features if n_components is None else n_components
+    expected_shape = (expected_components, expected_components)
+    if W_internal.shape != expected_shape:
+        raise RuntimeError(
+            "JAMICA returned an invalid single-model unmixing shape: expected "
+            f"{expected_shape}, got {W_internal.shape}"
+        )
+    if not np.isfinite(W_internal).all():
+        raise RuntimeError("JAMICA returned a non-finite unmixing matrix")
+    if np.linalg.matrix_rank(W_internal) != expected_components:
+        raise RuntimeError("JAMICA returned a singular unmixing matrix")
+
+    data_scale = float(result.data_scale)
+    if not np.isfinite(data_scale) or data_scale <= 0:
+        raise RuntimeError(f"JAMICA returned an invalid data scale: {data_scale!r}")
 
     if whiten:
-        # The solver centred and sphered internally, so W operates on whitened
-        # data and cannot be applied to the raw X -- the mean and the sphering
-        # have to be put back first.  Returning the sphering matrix as K also
-        # lets the caller reproduce Y, which was impossible while K was None.
-        K = np.asarray(result.whitener_)
-        mean = np.asarray(result.mean_).reshape(-1, 1)
-        Y = W @ (K @ (X - mean))  # (n_components, n_samples)
+        # Amica.fit() computes its mean and sphere after multiplying X by
+        # data_scale. Fold that scalar into K and express the mean back in the
+        # caller's coordinates so K acts on the original X.
+        W = W_internal
+        K = data_scale * np.asarray(result.whitener_, dtype=np.float64)
+        mean = np.asarray(result.mean_, dtype=np.float64).reshape(-1, 1) / data_scale
+        Y = W @ (K @ (X - mean))
     else:
-        K = None  # MNE pre-whitens; kept for the MNE ICA-method signature
-        Y = W @ X  # (n_components, n_samples)
+        # With no affine preprocessing, the solver optimized W_internal on
+        # data_scale * X. Return the equivalent operator on the caller's X.
+        K = None
+        W = data_scale * W_internal
+        Y = W @ X
+
+    if not result.converged:
+        warnings.warn(
+            f"JAMICA did not converge after {result.n_iter} iteration(s). "
+            "Consider increasing max_iter.",
+            JamicaConvergenceWarning,
+            stacklevel=2,
+        )
 
     if return_n_iter:
         return K, W, Y, result.n_iter

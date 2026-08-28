@@ -16,6 +16,7 @@ References
 
 from .amica_ica import AmicaICA, read_amica_ica
 from .config import AmicaConfig
+from .exceptions import JamicaConvergenceWarning
 from .metrics import (
     mixture_entropy,
     multimodality_flag,
@@ -40,6 +41,7 @@ __all__ = [
     "AmicaConfig",
     "AmicaICA",
     "AmicaResult",
+    "JamicaConvergenceWarning",
     "amica",
     "fit_ica",
     "get_model_ica",

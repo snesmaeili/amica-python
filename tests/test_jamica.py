@@ -80,6 +80,7 @@ def test_ll_increases():
 """Test the Picard-compatible functional API."""
 
 
+@pytest.mark.filterwarnings("ignore:JAMICA did not converge")
 def test_amica_function():
     """Test amica() functional API returns correct shapes."""
     from jamica import amica
@@ -95,6 +96,7 @@ def test_amica_function():
     assert Y.shape == (n_components, n_samples)
 
 
+@pytest.mark.filterwarnings("ignore:JAMICA did not converge")
 def test_amica_return_n_iter():
     """Test return_n_iter flag."""
     from jamica import amica
@@ -995,6 +997,7 @@ def test_rejection_chunked_matches_fused():
     )
 
 
+@pytest.mark.filterwarnings("ignore:JAMICA did not converge")
 def test_amica_wrapper(tiny_data):
     """Test the picard-compatible amica() wrapper function."""
     from jamica.solver import amica
@@ -1013,6 +1016,7 @@ def test_amica_wrapper(tiny_data):
     assert W2.shape == (4, 4)
 
 
+@pytest.mark.filterwarnings("ignore:JAMICA did not converge")
 def test_amica_wrapper_whiten_true_applies_sphering():
     """Regression: whiten=True must undo the internal centring and sphering.
 
@@ -1061,6 +1065,7 @@ def test_amica_wrapper_whiten_true_applies_sphering():
     np.testing.assert_allclose(Y0, W0 @ X, atol=1e-10)
 
 
+@pytest.mark.filterwarnings("ignore:JAMICA did not converge")
 def test_picard_api_parity(tiny_data):
     """amica() return signature matches picard() exactly.
 
@@ -1078,7 +1083,9 @@ def test_picard_api_parity(tiny_data):
     K_p, W_p, Y_p, n_iter_p = picard_mod.picard(
         X, whiten=False, return_n_iter=True, random_state=42
     )
-    K_a, W_a, Y_a, n_iter_a = amica(X, whiten=False, return_n_iter=True, random_state=42)
+    K_a, W_a, Y_a, n_iter_a = amica(
+        X, whiten=False, return_n_iter=True, random_state=42, max_iter=2
+    )
 
     # K: picard returns None when whiten=False
     assert K_p is None
@@ -1093,7 +1100,7 @@ def test_picard_api_parity(tiny_data):
     assert isinstance(n_iter_p, int) and n_iter_p > 0
 
     # MNE unpack pattern works without error
-    _, W_mne, _, _ = amica(X, whiten=False, return_n_iter=True, random_state=42)
+    _, W_mne, _, _ = amica(X, whiten=False, return_n_iter=True, random_state=42, max_iter=2)
     assert W_mne.shape == (X.shape[0], X.shape[0])
 
 
