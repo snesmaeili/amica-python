@@ -16,12 +16,12 @@ jobs:
 
     steps:
       - name: Check out pull request branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.head_ref }}
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -36,6 +36,6 @@ jobs:
           pre-commit run --all-files || true
 
       - name: Commit fixes
-        uses: stefanzweifel/git-auto-commit-action@v6
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: "style: apply pre-commit autofixes"
